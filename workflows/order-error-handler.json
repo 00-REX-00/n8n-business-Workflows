@@ -1,0 +1,71 @@
+{
+  "name": "Order Pipeline - Error Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Safety net\nRuns if the main workflow crashes somewhere the in-workflow failure handling can't catch (e.g. the alert or the log step itself). Set it in the main workflow: Settings -> Error workflow.",
+        "width": 560,
+        "height": 400,
+        "color": 3
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000901",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000902",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🔥 Order workflow crashed\n\nWorkflow: {{ $json.workflow.name }}\nFailed node: {{ $json.execution.lastNodeExecuted }}\nError: {{ $json.execution.error.message }}\n\nOpen the execution: {{ $json.execution.url }}\nThen check the Orders sheet for any order stuck on \"processing\".",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000903",
+      "name": "Alert: Workflow Crashed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        280
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Alert: Workflow Crashed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}

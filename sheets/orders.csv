@@ -1,0 +1,1 @@
+order_id,order_number,status,failed_step,reason,action,customer_name,customer_email,sku,product_name,quantity,amount_total,currency,stripe_event_id,created_at,updated_at,execution_id

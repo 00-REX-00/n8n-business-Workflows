@@ -1,0 +1,25 @@
+# Free local stack: n8n + Gotenberg (HTML -> PDF).
+# Start:  docker compose up -d      then open http://localhost:5678
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - WEBHOOK_URL=http://localhost:5678/
+      # - GENERIC_TIMEZONE=Africa/Lagos   # set to your own timezone
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - gotenberg
+
+  # n8n has no built-in HTML-to-PDF node, so we run Gotenberg (free, open source).
+  # The workflow calls it at http://gotenberg:3000
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+
+volumes:
+  n8n_data:

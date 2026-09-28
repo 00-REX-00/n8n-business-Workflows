@@ -1,0 +1,1342 @@
+{
+  "name": "Order-to-Fulfillment Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1. The event\nStripe calls this webhook when a checkout is paid. Nobody clicks anything.\n\nFailure plan: Stripe re-sends automatically for up to 3 days if n8n is down.",
+        "width": 700,
+        "height": 560,
+        "color": 7
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000001",
+      "name": "Note: 1 Event",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Verify, dedupe, claim\nDon't trust the webhook body - fetch the order from Stripe. Skip if we've already seen this order. Write a \"processing\" row straight away so nothing is invisible.\n\nFailure plan: retry 3x (network blips), then alert a human.",
+        "width": 1100,
+        "height": 760,
+        "color": 5
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000002",
+      "name": "Note: 2 Verify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        660,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Inventory\nValidate the order, check stock, reserve it.\n\nOut of stock / bad data is NOT retried - a human decides (restock or refund).",
+        "width": 1120,
+        "height": 760,
+        "color": 6
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000003",
+      "name": "Note: 3 Stock",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1960,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Invoice + email\nHTML -> PDF (Gotenberg) -> email with attachment.\n\nFailure plan: retry 3x with a pause, then alert a human.",
+        "width": 820,
+        "height": 800,
+        "color": 4
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000004",
+      "name": "Note: 4 Invoice",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3060,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 5. Every path ends in ONE place\nfulfilled / needs_attention / failed -> one row in the Orders sheet. Anything not fulfilled -> Telegram alert with order, step, reason and what to do.",
+        "width": 1860,
+        "height": 380,
+        "color": 3
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000005",
+      "name": "Note: 5 Outcome",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-order",
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000006",
+      "name": "Stripe Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "7c1e5a90-3b2d-4f6e-9a8c-5712order0001"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull the few fields we need out of the raw Stripe webhook body.\n// We deliberately do NOT trust anything else in this payload - the next step\n// re-fetches the checkout session straight from Stripe's API.\nconst body = $json.body ?? {};\n\nreturn [{\n  json: {\n    event_id: body.id ?? '',\n    event_type: body.type ?? '',\n    session_id: body.data?.object?.id ?? '',\n  },\n}];"
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000007",
+      "name": "Extract Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000008",
+              "leftValue": "={{ $json.event_type }}",
+              "rightValue": "checkout.session.completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000009",
+      "name": "Is Checkout Paid Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000010",
+      "name": "Ignore Other Events",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.stripe.com/v1/checkout/sessions/{{ $json.session_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "expand[]",
+              "value": "line_items.data.price.product"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000011",
+      "name": "Fetch Session from Stripe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn the Stripe checkout session into one clean \"order\" object\n// and list every problem that means a human must look at it.\nconst session = $json;\nconst event = $('Extract Event').first().json;\n\nconst lineItems = session.line_items?.data ?? [];\nconst item = lineItems[0];\nconst product = item?.price?.product ?? {};\n\nconst rawEmail = session.customer_details?.email ?? session.customer_email ?? '';\nconst email = String(rawEmail).trim().toLowerCase();\nconst emailLooksValid = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email);\n\nconst issues = [];\nif (session.payment_status !== 'paid') issues.push(`Payment status is \"${session.payment_status}\", not \"paid\"`);\nif (!item) issues.push('Order has no line items');\nif (lineItems.length > 1) issues.push('Order has more than one product - only single-product orders are automated');\nif (!product.metadata?.sku) issues.push(`Stripe product \"${product.name ?? 'unknown'}\" has no \"sku\" in its metadata`);\nif (!emailLooksValid) issues.push(`Customer email \"${rawEmail}\" is missing or badly formatted`);\n\nreturn [{\n  json: {\n    order_id: session.id,\n    order_number: 'INV-' + String(session.id).slice(-8).toUpperCase(),\n    stripe_event_id: event.event_id,\n    created_at: new Date((session.created ?? Date.now() / 1000) * 1000).toISOString(),\n    customer_name: session.customer_details?.name ?? '',\n    customer_email: email,\n    sku: product.metadata?.sku ?? '',\n    product_name: product.name ?? item?.description ?? '',\n    quantity: item?.quantity ?? 0,\n    unit_price: (item?.price?.unit_amount ?? 0) / 100,\n    amount_total: (session.amount_total ?? 0) / 100,\n    currency: String(session.currency ?? '').toUpperCase(),\n    valid: issues.length === 0,\n    issues: issues.join(' | '),\n  },\n}];"
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000012",
+      "name": "Normalize Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "order_id",
+              "lookupValue": "={{ $json.order_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000013",
+      "name": "Find Existing Order",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1140,
+        280
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000014",
+              "leftValue": "={{ $json.order_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000015",
+      "name": "Already Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        280
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000016",
+      "name": "Duplicate - Stop Here",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1580,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000017",
+              "name": "order_id",
+              "value": "={{ $('Normalize Order').first().json.order_id }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000018",
+              "name": "order_number",
+              "value": "={{ $('Normalize Order').first().json.order_number }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000019",
+              "name": "status",
+              "value": "processing",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000020",
+              "name": "customer_name",
+              "value": "={{ $('Normalize Order').first().json.customer_name }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000021",
+              "name": "customer_email",
+              "value": "={{ $('Normalize Order').first().json.customer_email }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000022",
+              "name": "sku",
+              "value": "={{ $('Normalize Order').first().json.sku }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000023",
+              "name": "product_name",
+              "value": "={{ $('Normalize Order').first().json.product_name }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000024",
+              "name": "quantity",
+              "value": "={{ $('Normalize Order').first().json.quantity }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000025",
+              "name": "amount_total",
+              "value": "={{ $('Normalize Order').first().json.amount_total }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000026",
+              "name": "currency",
+              "value": "={{ $('Normalize Order').first().json.currency }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000027",
+              "name": "stripe_event_id",
+              "value": "={{ $('Normalize Order').first().json.stripe_event_id }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000028",
+              "name": "created_at",
+              "value": "={{ $('Normalize Order').first().json.created_at }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000029",
+              "name": "updated_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000030",
+              "name": "execution_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000031",
+      "name": "Processing Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "order_id"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000032",
+      "name": "Claim Order",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1800,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000033",
+              "leftValue": "={{ $('Normalize Order').first().json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000034",
+      "name": "Order Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2020,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000035",
+              "name": "status",
+              "value": "needs_attention",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000036",
+              "name": "failed_step",
+              "value": "Validate order",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000037",
+              "name": "reason",
+              "value": "={{ $('Normalize Order').first().json.issues }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000038",
+              "name": "action",
+              "value": "Check the payment in the Stripe dashboard, fix the data (e.g. product sku), then contact the customer.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000039",
+      "name": "Flag: Invalid Order",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Inventory",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "sku",
+              "lookupValue": "={{ $('Normalize Order').first().json.sku }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000040",
+      "name": "Look Up Stock",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        260
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decide if we can fulfil the order from the Inventory sheet.\n// Anything odd (unknown SKU, duplicate rows, non-numeric stock) is treated\n// as \"needs a human\" - never as \"probably fine\".\nconst order = $('Normalize Order').first().json;\nconst rows = $input.all().map((i) => i.json).filter((r) => r.sku);\n\nconst notOk = (reason) => [{ json: { in_stock: false, reason } }];\n\nif (rows.length === 0) return notOk(`SKU \"${order.sku}\" is not in the Inventory sheet`);\nif (rows.length > 1) return notOk(`SKU \"${order.sku}\" appears ${rows.length} times in the Inventory sheet`);\n\nconst row = rows[0];\nconst stock = Number(row.stock);\nconst reorderLevel = Number(row.reorder_level) || 0;\n\nif (row.stock === '' || !Number.isFinite(stock)) {\n  return notOk(`Stock value \"${row.stock}\" for ${order.sku} is not a number`);\n}\nif (stock < order.quantity) {\n  return notOk(`Out of stock: only ${stock} x ${order.sku} left, customer paid for ${order.quantity}`);\n}\n\nconst newStock = stock - order.quantity;\nreturn [{\n  json: {\n    in_stock: true,\n    sku: order.sku,\n    stock_before: stock,\n    new_stock: newStock,\n    reorder_level: reorderLevel,\n    low_stock: newStock <= reorderLevel,\n  },\n}];"
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000041",
+      "name": "Check Stock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000042",
+              "leftValue": "={{ $json.in_stock }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000043",
+      "name": "In Stock?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2680,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000044",
+              "name": "status",
+              "value": "needs_attention",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000045",
+              "name": "failed_step",
+              "value": "Inventory check",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000046",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000047",
+              "name": "action",
+              "value": "Payment was taken but nothing was shipped. Restock and fulfil, or refund in Stripe and email the customer.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000048",
+      "name": "Flag: Out of Stock",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2900,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Inventory",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sku": "={{ $json.sku }}",
+            "stock": "={{ $json.new_stock }}"
+          },
+          "matchingColumns": [
+            "sku"
+          ],
+          "schema": [
+            {
+              "id": "sku",
+              "displayName": "sku",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "stock",
+              "displayName": "stock",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000049",
+      "name": "Reserve Stock",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2900,
+        240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000050",
+              "leftValue": "={{ $('Check Stock').first().json.low_stock }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000051",
+      "name": "Low Stock?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3120,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ Low stock warning\n\n{{ $('Check Stock').first().json.sku }} is down to {{ $('Check Stock').first().json.new_stock }} (reorder level {{ $('Check Stock').first().json.reorder_level }}).\nTime to reorder.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000052",
+      "name": "Low Stock Warning",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3340,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the invoice as an HTML page and hand it on as a file called\n// index.html - that is the file name Gotenberg expects.\nconst o = $('Normalize Order').first().json;\nconst money = (n) => `${Number(n).toFixed(2)} ${o.currency}`;\nconst esc = (s) => String(s ?? '').replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c]));\n\nconst html = `<!doctype html>\n<html><head><meta charset=\"utf-8\"><style>\n  body { font-family: Helvetica, Arial, sans-serif; color: #222; margin: 40px; }\n  h1 { margin: 0; font-size: 28px; }\n  .muted { color: #777; }\n  .head { display: flex; justify-content: space-between; margin-bottom: 40px; }\n  table { width: 100%; border-collapse: collapse; margin-top: 24px; }\n  th, td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; }\n  th:last-child, td:last-child { text-align: right; }\n  .total td { font-weight: bold; border-bottom: none; font-size: 18px; }\n</style></head><body>\n  <div class=\"head\">\n    <div><h1>INVOICE</h1><div class=\"muted\">${esc(o.order_number)}</div></div>\n    <div style=\"text-align:right\"><b>Demo Store</b><br>hello@demostore.test</div>\n  </div>\n  <p><b>Billed to:</b><br>${esc(o.customer_name)}<br>${esc(o.customer_email)}</p>\n  <p><b>Date:</b> ${o.created_at.slice(0, 10)}<br><b>Status:</b> PAID (Stripe ${esc(o.order_id)})</p>\n  <table>\n    <tr><th>Item</th><th>SKU</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr>\n    <tr><td>${esc(o.product_name)}</td><td>${esc(o.sku)}</td><td>${o.quantity}</td>\n        <td>${money(o.unit_price)}</td><td>${money(o.unit_price * o.quantity)}</td></tr>\n    <tr class=\"total\"><td colspan=\"4\">Total paid</td><td>${money(o.amount_total)}</td></tr>\n  </table>\n  <p class=\"muted\" style=\"margin-top:40px\">Thank you for your order!</p>\n</body></html>`;\n\nreturn [{\n  json: { order_number: o.order_number },\n  binary: {\n    data: {\n      data: Buffer.from(html).toString('base64'),\n      mimeType: 'text/html',\n      fileName: 'index.html',\n    },\n  },\n}];"
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000053",
+      "name": "Build Invoice HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Gotenberg-Output-Filename",
+              "value": "={{ $json.order_number }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000054",
+      "name": "Render Invoice PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3340,
+        240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Normalize Order').first().json.customer_email }}",
+        "subject": "=Your order {{ $('Normalize Order').first().json.order_number }} is confirmed",
+        "message": "=<p>Hi {{ $('Normalize Order').first().json.customer_name || 'there' }},</p>\n<p>Thanks for your order! We've received your payment of <b>{{ $('Normalize Order').first().json.amount_total }} {{ $('Normalize Order').first().json.currency }}</b> for\n<b>{{ $('Normalize Order').first().json.quantity }} x {{ $('Normalize Order').first().json.product_name }}</b>.</p>\n<p>Your invoice <b>{{ $('Normalize Order').first().json.order_number }}</b> is attached. We'll let you know when it ships.</p>\n<p>Demo Store</p>",
+        "options": {
+          "appendAttribution": false,
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "data"
+              }
+            ]
+          }
+        }
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000055",
+      "name": "Email Customer",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3560,
+        240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000056",
+              "name": "status",
+              "value": "fulfilled",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000057",
+              "name": "failed_step",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000058",
+              "name": "reason",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000059",
+              "name": "action",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000060",
+      "name": "Mark Fulfilled",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3780,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every technical error output in the workflow lands here.\n// We work out WHICH step failed (the furthest step that ran) and attach\n// a plain-English \"what to do\" so the person alerted doesn't need the logs.\nconst ran = (name) => { try { return $(name).isExecuted; } catch { return false; } };\n\n// Pipeline order, last step first.\nconst steps = [\n  ['Email Customer', 'Email customer',\n    'Money taken, stock reserved, invoice created - only the email failed (after 3 tries). Check the Gmail credential, then resend the confirmation manually and set status to fulfilled.'],\n  ['Render Invoice PDF', 'Generate invoice PDF',\n    'Money taken and stock reserved, but no invoice was made. Check that Gotenberg is running, then re-run or send the invoice manually.'],\n  ['Reserve Stock', 'Reserve stock',\n    'Money taken but stock was NOT reduced. Reduce the stock in the Inventory sheet by hand, then fulfil the order.'],\n  ['Look Up Stock', 'Inventory check',\n    'Could not read the Inventory sheet. Check the Google Sheets credential and that the \"Inventory\" tab exists.'],\n  ['Claim Order', 'Log order (claim)',\n    'Could not write to the Orders sheet. Check the Google Sheets credential and that the \"Orders\" tab exists.'],\n  ['Find Existing Order', 'Duplicate check',\n    'Could not read the Orders sheet. Check the Google Sheets credential and that the \"Orders\" tab exists.'],\n  ['Fetch Session from Stripe', 'Verify payment with Stripe',\n    'Could not confirm this payment with Stripe. If the session id is unknown the webhook may be fake; otherwise check the Stripe credential.'],\n];\n\nconst [, step, action] = steps.find(([node]) => ran(node)) ?? [null, 'Unknown step', 'Open the execution in n8n to investigate.'];\n\nconst err = $json.error;\nconst reason = typeof err === 'string'\n  ? err\n  : (err?.message || err?.description || JSON.stringify(err ?? $json).slice(0, 300));\n\nreturn [{ json: { status: 'failed', failed_step: step, reason, action } }];"
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000061",
+      "name": "Describe Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3340,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every path (fulfilled, needs attention, failed) ends here, so each order\n// gets exactly one row in the Orders sheet with its final status.\nconst ran = (name) => { try { return $(name).isExecuted; } catch { return false; } };\n\nconst event = $('Extract Event').first().json;\nconst order = ran('Normalize Order') ? $('Normalize Order').first().json : {};\nconst outcome = $json;\n\nreturn [{\n  json: {\n    order_id: order.order_id || event.session_id,\n    order_number: order.order_number || '',\n    status: outcome.status,\n    failed_step: outcome.failed_step || '',\n    reason: outcome.reason || '',\n    action: outcome.action || '',\n    customer_name: order.customer_name || '',\n    customer_email: order.customer_email || '',\n    sku: order.sku || '',\n    product_name: order.product_name || '',\n    quantity: order.quantity ?? '',\n    amount_total: order.amount_total ?? '',\n    currency: order.currency || '',\n    stripe_event_id: event.event_id,\n    created_at: order.created_at || '',\n    updated_at: new Date().toISOString(),\n    execution_id: $execution.id,\n  },\n}];"
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000062",
+      "name": "Build Log Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000063",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "fulfilled",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000064",
+      "name": "Needs Human?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4220,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🚨 Order needs attention\n\nOrder: {{ $json.order_number || '-' }}\nStripe session: {{ $json.order_id }}\nCustomer: {{ $json.customer_name }} <{{ $json.customer_email }}>\nItem: {{ $json.quantity }} x {{ $json.product_name }} ({{ $json.sku }})\nPaid: {{ $json.amount_total }} {{ $json.currency }}\n\nStatus: {{ $json.status }}\nFailed step: {{ $json.failed_step }}\nWhy: {{ $json.reason }}\n\nWhat to do: {{ $json.action }}\n\nn8n execution: {{ $json.execution_id }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000065",
+      "name": "Alert Human",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4440,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "order_id"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "0f1d2c3b-4a59-4e6f-8a7b-000000000066",
+      "name": "Update Order Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4220,
+        640
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Stripe Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Event": {
+      "main": [
+        [
+          {
+            "node": "Is Checkout Paid Event?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Checkout Paid Event?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Session from Stripe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore Other Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Session from Stripe": {
+      "main": [
+        [
+          {
+            "node": "Normalize Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Order": {
+      "main": [
+        [
+          {
+            "node": "Find Existing Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Existing Order": {
+      "main": [
+        [
+          {
+            "node": "Already Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Processed?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate - Stop Here",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processing Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processing Row": {
+      "main": [
+        [
+          {
+            "node": "Claim Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Order": {
+      "main": [
+        [
+          {
+            "node": "Order Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Order Valid?": {
+      "main": [
+        [
+          {
+            "node": "Look Up Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag: Invalid Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look Up Stock": {
+      "main": [
+        [
+          {
+            "node": "Check Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Stock": {
+      "main": [
+        [
+          {
+            "node": "In Stock?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In Stock?": {
+      "main": [
+        [
+          {
+            "node": "Reserve Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag: Out of Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Stock": {
+      "main": [
+        [
+          {
+            "node": "Low Stock?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Invoice HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Low Stock?": {
+      "main": [
+        [
+          {
+            "node": "Low Stock Warning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build Invoice HTML": {
+      "main": [
+        [
+          {
+            "node": "Render Invoice PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Invoice PDF": {
+      "main": [
+        [
+          {
+            "node": "Email Customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Customer": {
+      "main": [
+        [
+          {
+            "node": "Mark Fulfilled",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Describe Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Fulfilled": {
+      "main": [
+        [
+          {
+            "node": "Build Log Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag: Invalid Order": {
+      "main": [
+        [
+          {
+            "node": "Build Log Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag: Out of Stock": {
+      "main": [
+        [
+          {
+            "node": "Build Log Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe Failure": {
+      "main": [
+        [
+          {
+            "node": "Build Log Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Log Row": {
+      "main": [
+        [
+          {
+            "node": "Needs Human?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Order Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Human?": {
+      "main": [
+        [
+          {
+            "node": "Alert Human",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}

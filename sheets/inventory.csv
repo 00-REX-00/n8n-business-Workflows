@@ -1,0 +1,4 @@
+sku,product_name,stock,reorder_level,unit_price
+MUG-001,Ceramic Mug,10,3,18.00
+TEE-001,Logo T-Shirt,3,2,25.00
+POSTER-001,Limited Edition Poster,0,1,40.00
