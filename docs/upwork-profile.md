@@ -1,6 +1,9 @@
-# Upwork Profile Kit: n8n Automation
+# Upwork Profile Kit: Custom Business Systems Developer
 
-Paste-ready copy for every profile field, plus the reasons behind it. Character limits are Upwork's.
+Paste-ready copy for every profile field. Character limits are Upwork's.
+Anything in `[BRACKETS]` is a placeholder. Fill it in with real facts or delete it, and never invent numbers.
+
+**Positioning in one line:** I build custom business systems (web apps, automated backends and AI features) that replace manual work for agencies, sales teams and service businesses.
 
 ---
 
@@ -9,202 +12,193 @@ Paste-ready copy for every profile field, plus the reasons behind it. Character 
 **Pick one:**
 
 ```
-n8n Automation Expert | Stripe, CRM & AI Workflows That Don't Break
+Custom Business Systems & SaaS Developer | Automation, AI, Supabase
 ```
 ```
-n8n Developer | Business Automation, Webhooks, APIs & AI Agents
+Full-Stack Developer | Lead Gen, CRM & Agency Tools | Python, TypeScript
 ```
 ```
-n8n & Zapier Automation | Order, Lead & Invoice Workflows | AI Agents
+I Build Custom Business Software & Automated Backends | Web Apps + AI
 ```
 
-Why: clients search for the tool by name ("n8n"). Put it first, then the outcomes they're paying for. Avoid vague titles like "Virtual Assistant | Data Entry | Automation | Web Design". A title that lists many unrelated skills tells the client you're not a specialist.
+The first is the strongest. It names what you build, then the keywords clients filter on.
 
 ---
 
-## 2. Hourly rate
+## 2. Rate
 
-- **Start at $25–35/hr.** Fixed-price small jobs: **$80–250.**
-- Goal: 3–5 completed jobs with 5-star reviews, then raise to $45–60/hr.
-- Don't go below $20. Very low rates bring difficult clients and signal low quality.
+- **Hourly: $35–45/hr to start.** Raise to $60+ after 3–5 reviews.
+- **Fixed price** is better for systems work. Clients compare total cost, not hourly rates.
+  - Small jobs/fixes to earn reviews: $300–$1,500
+  - Full systems once you have reviews: $3k–$20k+
+- Always split big builds into **milestones** (e.g. 30% / 40% / 30%). Clients feel safer, and you get paid as you go.
 
 ---
 
-## 3. Overview
-
-Upwork shows only the **first ~200 characters** in search results and proposals. Those lines decide whether the client clicks.
+## 3. Overview (max 5,000 chars; the first ~200 are what clients see)
 
 ```
-I build n8n automations that run your business while you sleep, and tell you the moment something goes wrong instead of failing silently.
+I build custom business systems that replace manual work: web apps, automated backends and AI features, built around how your business actually runs.
 
-Most automations work in the demo and break in real life: a webhook fires twice and the customer gets charged twice, an API times out and an order disappears, an email fails and nobody notices for a week. I design for those cases from the start.
+Off-the-shelf tools get you 70% of the way. Then your team fills the gap with spreadsheets, copy-paste and five different subscriptions. I build the system that closes that gap: one app, your workflow, automated end to end.
+
+RECENT WORK
+• Lead generation & outreach platform (live SaaS, paying users): finds local businesses street by street, enriches their contact details, runs cold outreach, lets users cold-call from inside the app, and generates AI call summaries. Built and launched solo.
+• Social media management platform for an agency ([$28k project]): automatic and scheduled posting across platforms, built for social media managers running many client accounts.
+• Event-driven order pipeline: Stripe payment → verification → duplicate protection → stock reservation → PDF invoice → customer email → logging, with automatic retries and instant alerts on every failure.
 
 WHAT I BUILD
-• Order & payment workflows: Stripe/PayPal → stock check → invoice PDF → customer email → order log
-• Lead capture & CRM sync: forms, Facebook/LinkedIn leads, HubSpot, Pipedrive, GoHighLevel, Airtable, Google Sheets
-• AI workflows: OpenAI/Claude for email replies, lead qualification, document extraction, chatbots, AI agents
-• Reporting & alerts: daily summaries and instant Telegram/Slack/email alerts
-• Fixing and migrating: broken n8n flows, Zapier/Make → n8n migrations (cut your monthly bill)
-
-RECENT EXAMPLE
-An event-driven order pipeline: a Stripe payment triggers payment verification, duplicate protection, stock check and reservation, PDF invoice, customer email and order logging. Every step either retries automatically or sends a Telegram alert naming the order, the failed step, the reason and the next action. Replaying the same Stripe event never creates a second order. (See my portfolio.)
+• Custom CRMs, dashboards and internal tools
+• SaaS products and MVPs, from idea to paying users
+• Lead generation, outreach and sales automation systems
+• Agency tools: scheduling, client portals, reporting
+• Automated backends: APIs, webhooks, scheduled jobs, data pipelines, integrations
+• AI features: summaries, classification, data extraction, AI agents
 
 HOW I WORK
-1. A short call or message thread to map your current process
-2. A written plan: each step, what can fail, and what happens when it does
-3. Build, test with real data, and hand over with a walkthrough video
-4. 14 days of free fixes after delivery
+1. Discovery: we map your process and decide what the system must do
+2. Written plan: features, milestones, timeline and fixed price, before any code
+3. Build in milestones with a working demo at each one, so you see progress weekly
+4. Launch, handover (code, documentation, walkthrough video) and [30] days of support
 
-You get the workflow JSON, documentation, and a video explaining how it works, so you're never locked in to me.
+You own all the code. No lock-in.
 
-TOOLS
-n8n (cloud & self-hosted/Docker), JavaScript, REST APIs & webhooks, Stripe, Google Workspace, Airtable, Notion, HubSpot, Slack, Telegram, OpenAI, Claude, Supabase.
+STACK
+TypeScript, JavaScript, Python, React, Node.js, Supabase (Postgres, auth, edge functions), REST APIs, webhooks, n8n, OpenAI/Claude APIs, Stripe.
 
-Send me a description of the process you want automated. I'll reply with how I'd build it and a fixed price.
+Tell me what's slowing your business down. I'll reply with how I'd build the system and what it would cost.
 ```
 
-> **Edit before pasting:** remove any tool from the TOOLS line or the "WHAT I BUILD" list that you haven't actually used or can't learn in a day. Clients test this in interviews.
+**Notes**
+- Your SaaS having **paying users** is your strongest claim. Most freelancers have never shipped a product people pay for. If you can share the product link publicly, add it.
+- Only include the "$28k" figure if the agency is OK with it. Otherwise write "a large agency platform".
+- **Lovable:** leave it off the stack line. Some clients see it as a no-code tool and assume you can't code. If a job post asks for Lovable, mention it in that proposal.
+- Add React/Next.js/Node only if you actually use them.
 
 ---
 
-## 4. Skills (add up to 15, in this order)
+## 4. Skills (up to 15, in this order)
 
-1. n8n
-2. Automation
-3. Workflow Automation
-4. API Integration
-5. Zapier
-6. Make.com
-7. JavaScript
-8. Webhooks
-9. Stripe
-10. Google Sheets
-11. AI Agent Development
-12. OpenAI API
-13. CRM Automation
-14. Airtable
-15. Docker
+1. Full-Stack Development
+2. SaaS Development
+3. Web Application
+4. TypeScript
+5. Python
+6. JavaScript
+7. Supabase
+8. API Development
+9. Automation
+10. AI Agent Development
+11. CRM Development
+12. React
+13. Node.js
+14. n8n
+15. Stripe
 
-Remove any unrelated skills (graphic design, data entry, writing, etc.). They pull you into the wrong search results.
-
----
-
-## 5. Portfolio item #1 (build it from this repo)
-
-**Title:**
-```
-Stripe Order-to-Fulfillment Automation (n8n) with Failure Alerts
-```
-
-**Description:**
-```
-Problem: an online store needed paid orders fulfilled automatically, without double-processing, selling stock it didn't have, or failing silently.
-
-Solution: an event-driven n8n workflow triggered by a real Stripe webhook:
-• Verifies the payment against Stripe's API (doesn't trust the webhook body)
-• Ignores duplicate events: replaying the same event never creates a second order
-• Checks and reserves stock; out-of-stock orders go to "needs attention", never "fulfilled"
-• Generates a PDF invoice and emails the customer
-• Logs every order in Google Sheets
-• Every failure-prone step either retries or sends a Telegram alert with the order, failed step, reason and next action
-
-Stack: n8n (self-hosted, Docker), Stripe, Gotenberg (PDF), Gmail, Google Sheets, Telegram, JavaScript.
-```
-
-**Role:** Automation developer
-**Skills:** n8n, Stripe, Workflow Automation, API Integration, JavaScript
-
-**Images to upload (4–6):**
-1. **Cover:** screenshot of the full workflow on the n8n canvas (zoom so node names are readable)
-2. The ASCII flow diagram from the README, redrawn as a clean image (or a canvas screenshot)
-3. A Telegram alert message on your phone (out-of-stock example)
-4. The generated PDF invoice
-5. The Google Sheets order log showing `fulfilled` and `needs_attention` rows
-6. The failure-plan table from `docs/failure-plan.md`
-
-**Video:** record a 2–3 minute Loom using `docs/video-script.md`. A video in the portfolio is the strongest proof a client can see before hiring.
-
-### Portfolio items #2 and #3 (build these next, 1–2 days each)
-You need 3 portfolio items minimum. Build these because they match the most common job posts:
-- **AI lead qualifier:** form/webhook → OpenAI scores and enriches the lead → hot leads to CRM + Slack alert, cold leads to a nurture sheet
-- **AI email assistant:** Gmail trigger → classify (sales / support / spam) → draft reply → save as draft or send to Slack for approval
+Swap React/Node.js for what you actually use (e.g. Next.js, FastAPI).
 
 ---
 
-## 6. Project Catalog (fixed-price offers clients buy directly)
+## 5. Portfolio (3 case studies, in this order)
 
-**Project 1**
-```
-I will build a custom n8n automation workflow for your business
-```
-- Starter, $120: 1 workflow, up to 5 steps, 2 apps, 3-day delivery
-- Standard, $280: up to 12 steps, error alerts, documentation, 5 days
-- Advanced, $550: multi-workflow system, AI step, error handling, video walkthrough, 7 days
+Format for each one: **Problem → What I built → Key features → Stack → Result.** Upload screenshots and a **2–3 minute demo video** (Loom) for each. The video does most of the selling.
 
-**Project 2**
+### #1: Lead generation & outreach SaaS
+**Title:** `Lead Generation & Cold Outreach SaaS: Live Product with Paying Users`
 ```
-I will fix or debug your broken n8n workflow
-```
-- $60 for 1 workflow, 2-day delivery
+Problem: Sales teams waste hours finding local business leads, copying contact details and juggling separate tools for email, calls and notes.
 
-**Project 3**
+What I built: an all-in-one platform that:
+• Finds businesses street by street in a chosen area
+• Enriches each lead with contact information
+• Runs automated cold outreach to individual contacts
+• Lets users cold-call directly from the app
+• Generates AI summaries of every call
+• [Other features: pipeline view, follow-up reminders, analytics...]
+
+Stack: [TypeScript, Python, Supabase, ...]
+Result: Live, with [3] paying users. Built and launched solo.
 ```
-I will migrate your Zapier or Make automations to n8n
+Screenshots: dashboard, lead map/list, outreach screen, in-app calling, an AI call summary. **Blur any real people's personal data.**
+
+### #2: Social media automation platform (agency)
+**Title:** `Social Media Scheduling & Auto-Posting Platform for an Agency`
 ```
-- $150 for up to 3 zaps/scenarios
+Problem: [The agency's] social media managers handled many client accounts by hand: logging in to each platform, posting manually and tracking schedules in spreadsheets.
+
+What I built: a social media manager app for social media managers:
+• Automatic and scheduled posting across [platforms]
+• Multi-client account management
+• [Content calendar, approvals, media library, analytics...]
+
+Stack: [...]
+Result: [In production / in active development, a $28k engagement]
+```
+Get the agency's permission first. If they say no to screenshots, use a short anonymised description, or a demo with dummy data.
+
+### #3: Stripe order-to-fulfillment pipeline
+Use the order pipeline in this repo (`README.md`, `docs/failure-plan.md`, `docs/video-script.md`). It shows careful backend work: duplicate protection, retries and alerts.
+
+---
+
+## 6. Project Catalog (fixed-price offers)
+
+**1. Paid discovery: your way into big projects**
+```
+I will plan your custom business system or SaaS MVP
+```
+- $150–$300: 60-min call, then a written spec with features, architecture, milestones, timeline and a fixed quote. The fee comes off the build price if they hire you.
+
+**2. MVP build**
+```
+I will build your SaaS MVP or custom web app with Supabase
+```
+- Starter, $1,500: core feature + auth + database, 2 weeks
+- Standard, $3,500: up to 5 features, admin dashboard, payments
+- Advanced, $7,500+: full system, automation, AI features, 30 days support
+
+**3. Automation/backend**
+```
+I will build an automated backend, integration or AI workflow for your business
+```
+- $300 / $800 / $2,000 tiers
 
 ---
 
 ## 7. Other fields
 
-- **Photo:** clear face, plain background, smiling, good light. No logos or avatars.
-- **Video intro (60–90s):** who you are, what you automate, one example, "message me". Profiles with a video get noticeably more invites.
-- **Availability:** "More than 30 hrs/week" and turn on **"Available now"**.
-- **English level:** set it honestly; clients filter on it.
-- **Profile completeness:** must be 100% (Upwork ranks incomplete profiles lower).
-- **Skill certifications / Skill Tests:** if Upwork offers anything for automation or JavaScript, take it.
+- **Photo:** clear face, plain background, good light.
+- **Video intro (60–90s):** who you are, "I build custom business systems", show your SaaS for 20 seconds, then "message me".
+- **Availability:** turn on "Available now".
+- **Profile 100% complete**, identity and payment method verified.
+- Delete or hide old portfolio items that don't match the new positioning.
 
 ---
 
-## 8. Why 2+ years with no hires: the usual causes
-
-Check yourself against each one:
-
-| Problem | Fix |
-|---|---|
-| Generalist profile (many unrelated skills) | One niche: n8n automation. Everything on the profile supports it. |
-| No portfolio or weak portfolio | 3 real, documented projects with screenshots and a video (section 5) |
-| Generic or long proposals | Tailored proposals that start with the client's problem (section 9) |
-| Applying to jobs with 50+ proposals | Apply only to jobs posted in the **last 1–2 hours** with **<15 proposals** |
-| Applying to jobs requiring "Expert" with $1k+ budgets | Target small fixed-price jobs ($50–500) and clients with a verified payment method |
-| Low Job Success / no activity | First jobs are about reviews, not money |
-| Account location/payment not verified | Verify identity and payment method so you appear in search |
-
----
-
-## 9. Proposal template (adapt every time, never send it as-is)
+## 8. Proposal template for system builds ($3k+ jobs)
 
 ```
-Hi [name if shown],
+Hi [name],
 
-[One sentence restating THEIR problem in your words, showing you read the post.]
+[1 sentence on THEIR business problem, in your words.]
 
-I recently built [closest portfolio example] that [result]. [Link to portfolio item.]
+I've built something close: [closest case study, one line + result]. [Portfolio/demo link]
 
-For your project I'd:
-1. [Concrete step specific to their apps]
-2. [Concrete step]
-3. [Error handling: what happens when X fails]
+How I'd approach your system:
+1. [Core module, e.g. "Lead intake + enrichment pipeline"]
+2. [Module 2]
+3. [Module 3 / integrations]
+Stack: [what fits their needs, briefly why]
 
-Quick question: [one smart question about their setup, e.g. "Is n8n self-hosted or cloud?"]
+Milestones: [M1: X in week 1–2] → [M2] → [M3]. Working demo at each one.
 
-I can have a first working version in [X days].
+One question before I quote exactly: [smart question about their process/data].
 
-[Your name]
+[Name]
 ```
 
 Rules:
-- Under 150 words. The first 2 lines are all they see in the list.
-- Never start with "Hi, I'm X and I have Y years of experience."
-- Always ask one question. Replies to it start a conversation, and conversations lead to hires.
-- Use Freelancer Plus boosts only on jobs that fit you well and were posted recently.
+- Under 200 words. The first 2 lines are all they see in the list.
+- Apply to jobs posted in the **last 1–2 hours**, with a **verified payment method** and client spend history if possible.
+- Use Freelancer Plus boosts on jobs that closely match your two products (lead gen, outreach, CRM, agency, social media tools).
+- Mix in small jobs ($300–$1,500) until you have 3–5 reviews.
