@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import absences, data, teams, value
+from . import absences, data, news, safety, teams, value
 from .model import LeagueModel
 
 HEADLINE = ["1", "X", "2", "1X", "X2", "over_1.5", "over_2.5", "under_2.5",
@@ -28,15 +28,20 @@ def read_fixtures(path: Path) -> pd.DataFrame:
     return fx
 
 
-def _missing_adjustment(lm: LeagueModel, team: str, names, warnings: list[str]) -> tuple[float, list[str]]:
-    """Attack multiplier for players listed as out ("Haaland; De Bruyne")."""
-    if not isinstance(names, str) or not names.strip():
-        return 1.0, []
-    season = int(lm.history["season"].max())
-    shares = absences.team_shares(lm.league, team, season, lm.goals.teams)
-    matched, unknown = absences.resolve_players(names.replace(",", ";").split(";"), shares)
+def _shares(lm: LeagueModel, team: str) -> pd.DataFrame:
+    if lm.league not in absences.UNDERSTAT_LEAGUES:
+        return absences.attack_shares(pd.DataFrame(columns=["team"]), team)
+    return absences.team_shares(lm.league, team, int(lm.history["season"].max()), lm.goals.teams)
+
+
+def _missing(shares: pd.DataFrame, typed, from_news: list[str], team: str,
+             warnings: list[str]) -> tuple[float, list[str]]:
+    """Attack multiplier for players out: typed in the fixture file plus team news."""
+    names = typed.replace(",", ";").split(";") if isinstance(typed, str) else []
+    matched, unknown = absences.resolve_players(names, shares)
     if unknown:
         warnings.append(f"{team}: no player data for {', '.join(unknown)} (ignored)")
+    matched += [p for p in absences.resolve_players(from_news, shares)[0] if p not in matched]
     return absences.multiplier(shares, matched), matched
 
 
@@ -64,16 +69,21 @@ def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tupl
             warnings.append(f"Skipped {fx['home']} v {fx['away']}: {exc}")
             continue
         referee = fx["referee"] if isinstance(fx["referee"], str) else None
-        h_mult, h_out = _missing_adjustment(lm, home, fx["home_missing"], warnings)
-        a_mult, a_out = _missing_adjustment(lm, away, fx["away_missing"], warnings)
+        fn = news.fixture_news(league, int(lm.history["season"].max()), f"{fx['date']:%Y-%m-%d}",
+                               home, away, lm.goals.teams)
+        h_sh, a_sh = _shares(lm, home), _shares(lm, away)
+        h_mult, h_out = _missing(h_sh, fx["home_missing"], fn.home.out, home, warnings)
+        a_mult, a_out = _missing(a_sh, fx["away_missing"], fn.away.out, away, warnings)
         pred = lm.predict(home, away, referee, fx["home_adj"] * h_mult, fx["away_adj"] * a_mult)
         pred["missing"] = {"home": (h_out, h_mult), "away": (a_out, a_mult)}
         odds = {c.split(":", 1)[1]: float(fx[c]) for c in fixtures.columns
                 if c.startswith("odds:") and pd.notna(fx[c])}
+        manual_ok = str(fx.get("news_checked", "")).strip().lower() in ("1", "yes", "true", "y")
+        bets, skipped = safety.screen(value.find_value(pred["probs"], odds), fn, h_sh, a_sh, manual_ok)
         results.append({
             "fx": fx, "league": league, "home": home, "away": away, "pred": pred,
-            "ctx": lm.context(home, away), "odds": odds,
-            "bets": value.find_value(pred["probs"], odds),
+            "ctx": lm.context(home, away), "odds": odds, "news": fn,
+            "bets": bets, "skipped": skipped,
         })
     return results, warnings
 
@@ -96,7 +106,7 @@ def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | N
     for w in warnings:
         print(f"\n!! {w}")
     for r in results:
-        _print_fixture(r["fx"], r["home"], r["away"], r["pred"], r["ctx"], r["bets"], bankroll)
+        _print_fixture(r["fx"], r["home"], r["away"], r["pred"], r["ctx"], r["bets"], bankroll, r["skipped"])
     table = to_table(results)
     if out_csv is not None and not table.empty:
         out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +115,7 @@ def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | N
     return table
 
 
-def _print_fixture(fx, home, away, pred, ctx, bets, bankroll):
+def _print_fixture(fx, home, away, pred, ctx, bets, bankroll, skipped=()):
     print("\n" + "=" * 72)
     print(f"{fx['date']:%a %d %b %Y}  [{data.LEAGUES.get(fx['league'], fx['league'])}]  {home} v {away}")
     print(f"Expected goals {pred['xg_home']:.2f} - {pred['xg_away']:.2f}   "
@@ -113,6 +123,9 @@ def _print_fixture(fx, home, away, pred, ctx, bets, bankroll):
     if "exp_corners" in pred:
         print(f"Expected corners {pred['exp_corners']:.1f}   expected cards {pred.get('exp_cards', float('nan')):.1f}"
               + (f" (referee x{pred['referee_factor']:.2f})" if "referee_factor" in pred else ""))
+    if skipped:
+        for b, reason in skipped:
+            print(f"  skipped {b.market} @ {b.odds}: {reason}")
     for side, team in (("home", home), ("away", away)):
         out, mult = pred.get("missing", {}).get(side, ([], 1.0))
         if out:
@@ -132,5 +145,7 @@ def _print_fixture(fx, home, away, pred, ctx, bets, bankroll):
             if bankroll:
                 stake += f" = {b.stake_pct * bankroll:,.0f}"
             print(f"  * {b.market:<16} odds {b.odds:<5} fair {b.fair_odds:.2f}  edge {b.edge:+.1%}{stake}")
+    elif skipped:
+        print("No safe bets for this match (see skipped above).")
     elif any(c.startswith("odds:") for c in fx.index):
         print("No value at these odds: no bet.")

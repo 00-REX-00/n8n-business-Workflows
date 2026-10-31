@@ -15,6 +15,7 @@ import pandas as pd
 
 REPLACEMENT = 0.5
 MIN_MULTIPLIER = 0.70
+UNDERSTAT_LEAGUES = {"E0", "SP1", "I1", "D1", "F1"}
 MIN_MINUTES = 270           # ignore players with less than 3 full games
 SHRINK_MINUTES = 900        # per-90 rates move halfway to the team median after 10 full games
 
@@ -53,8 +54,9 @@ def resolve_players(names: list[str], shares: pd.DataFrame) -> tuple[list[str], 
             continue
         hit = lower.get(name.lower())
         if hit is None:
-            # surname only, e.g. "Haaland"
-            hits = [k for k in known if k.lower().split()[-1] == name.lower()]
+            # surname only or initial + surname, e.g. "Haaland", "E. Haaland"
+            surname = name.lower().split()[-1]
+            hits = [k for k in known if k.lower().split()[-1] == surname]
             hit = hits[0] if len(hits) == 1 else None
         if hit is None:
             close = difflib.get_close_matches(name.lower(), list(lower), n=1, cutoff=0.8)

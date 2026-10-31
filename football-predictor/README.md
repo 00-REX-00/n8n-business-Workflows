@@ -123,7 +123,8 @@ python -m unittest discover -s tests
    | `league` | `E0` Premier League, `SP1` La Liga, `I1` Serie A, `D1` Bundesliga, `F1` Ligue 1 (others in `predictor/data.py`) |
    | `date`, `home`, `away` | Team names as SportyBet writes them are usually recognised. Unknown names show the closest matches, and you add them to `predictor/teams.py` |
    | `referee` | Optional. Improves the cards markets |
-   | `home_missing`, `away_missing` | Optional. Players who are out, separated by `;` (surnames work: `Haaland; De Bruyne`) |
+   | `home_missing`, `away_missing` | Optional. Players who are out, separated by `;` (surnames work: `Haaland; De Bruyne`). Added to the ones team news finds |
+   | `news_checked` | Optional. `yes` if you checked team news yourself; otherwise picks need an automatic news source |
    | `home_adj`, `away_adj` | Optional, default 1.0. Extra multiplier on top: ~0.90 for heavy rotation, ~1.05 when the opponent's key defenders are out |
    | `odds:<market>` | Any of: `1 X 2 1X X2 12 dnb_1 dnb_2 over_1.5 under_1.5 over_2.5 under_2.5 over_3.5 under_3.5 home_over_0.5 away_over_0.5 home_over_1.5 away_over_1.5 btts_yes btts_no cards_over_3.5 cards_under_3.5 corners_over_9.5 …` |
 
@@ -151,6 +152,16 @@ python -m predictor backtest --seasons 2024 2025
 python -m predictor backtest --leagues N1 P1 E1 --seasons 2024 2025
 ```
 
+## Play-safe rules (`predictor/safety.py`)
+
+A value bet only becomes a pick if it passes all three:
+
+1. **No news, no bet.** The app looks up injuries and suspensions for every fixture: API-Football for all leagues (free key, 100 requests/day: [dashboard.api-football.com](https://dashboard.api-football.com)), plus Fantasy Premier League for the Premier League (no key). Players who are out are applied automatically. If no source answers, the fixture's picks are **withheld**. You can override with "I've checked the team news myself" (`news_checked=yes` column in the fixtures file).
+2. **Key player doubtful → no bet.** If a player with ≥10% of their team's attack is doubtful, the model can't know whether they play, so the fixture is skipped.
+3. **Edge above 15% → no bet.** Real edges are small; a huge one almost always means the model is missing something (motivation, rotation, late news).
+
+Withheld picks are listed with the reason, so you can see what was skipped.
+
 ## Staking rules built in (`predictor/value.py`)
 
 - A bet needs ≥ 5% expected edge, model probability ≥ 25% and odds ≤ 4.0.
@@ -175,12 +186,13 @@ Accumulators: the slip shows the combined odds, real win chance and edge. Prefer
 | Results, shots, corners, cards, referees, odds | football-data.co.uk (fallback: GitHub mirror for top 5, no odds) | Free |
 | Team xG per match | understat.com (fallback: Premier League copy in vaastav/Fantasy-Premier-League, to 2024-25) | Free, top 5 leagues |
 | Player xG / xA | understat.com (fallback: vibedatascience/understat_players_aggregated) | Free, top 5 leagues |
+| Injuries, suspensions | API-Football `/injuries` (key in the app sidebar or `API_FOOTBALL_KEY`); Fantasy Premier League | Free tier 100 requests/day; paid plans from about $19/month |
 
 All downloads are cached in `data/raw/`.
 
 ## Roadmap
 
 1. Run the backtest with odds on your machine (football-data.co.uk) to test whether it profits, then refit the calibration with xG for all 5 leagues: `python -m predictor backtest --seasons 2023 2024 2025 --save-calibration`.
-2. Automatic lineups and injuries from API-Football (paid) instead of picking missing players by hand.
+2. Confirmed lineups (released ~1 hour before kickoff) from API-Football, on top of the injury list.
 3. Test the second-wave leagues (Championship, Eredivisie, Portugal, Belgium, Scotland, Turkey, Greece). Bookmaker prices in smaller leagues are often less sharp.
 4. n8n workflow in this repo: fetch fixtures → run model → send value picks to Telegram.

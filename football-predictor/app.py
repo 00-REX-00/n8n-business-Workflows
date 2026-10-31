@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from predictor import absences, backtest, calibration, data, markets, predict, slip, tracker, value
+from predictor import absences, backtest, calibration, data, markets, news, predict, safety, slip, tracker, value
 from predictor.model import LeagueModel
 
 ROOT = Path(__file__).resolve().parent
@@ -52,6 +52,12 @@ def league_model(league: str, as_of: date, refresh_token: int) -> LeagueModel:
 @st.cache_data(ttl=6 * 3600, show_spinner="Loading player data…")
 def squad_shares(league: str, team: str, season: int, fd_teams: tuple[str, ...]) -> pd.DataFrame:
     return absences.team_shares(league, team, season, list(fd_teams))
+
+
+@st.cache_data(ttl=news.NEWS_TTL_HOURS * 3600, show_spinner="Checking team news…")
+def fixture_news(league: str, season: int, day: str, home: str, away: str,
+                 fd_teams: tuple[str, ...], key_token: str) -> news.FixtureNews:
+    return news.fixture_news(league, season, day, home, away, list(fd_teams))
 
 
 def add_to_slip(leg: slip.Leg) -> None:
@@ -113,6 +119,12 @@ with st.sidebar:
     if bankroll != settings.get("bankroll"):
         settings["bankroll"] = bankroll
         save_settings(settings)
+    key_in = st.text_input("API-Football key", value=settings.get("api_football_key", ""), type="password",
+                           help="For team news (injuries, suspensions) in every league. Free key: "
+                                "dashboard.api-football.com. Premier League news also works without it (FPL).")
+    if key_in != settings.get("api_football_key", ""):
+        settings["api_football_key"] = key_in
+        save_settings(settings)
     if st.button("Refresh data", help="Download the latest results from football-data.co.uk"):
         st.session_state.refresh += 1
         st.cache_data.clear()
@@ -149,15 +161,31 @@ with tab_match:
     refs = ["(unknown)"] + sorted(model_today.referee_factor)
     referee = c4.selectbox("Referee", refs, help="Only some leagues publish referees. Affects cards.")
 
-    with st.expander("Team news (missing players, rotation)", expanded=False):
+    season_now = int(model_today.history["season"].max())
+    fn = fixture_news(league, season_now, f"{match_day:%Y-%m-%d}", home, away,
+                      tuple(model_today.goals.teams), settings.get("api_football_key", ""))
+    if fn.found:
+        st.success(f"Team news checked ({fn.source}): {home} {len(fn.home.out)} out, {len(fn.home.doubtful)} doubtful · "
+                   f"{away} {len(fn.away.out)} out, {len(fn.away.doubtful)} doubtful. "
+                   "Players who are out are applied below.")
+        nf = news.team_news_frame(fn, home, away)
+        if not nf.empty:
+            with st.expander("Injuries and suspensions"):
+                st.dataframe(nf, hide_index=True, width="stretch")
+        manual_ok = False
+    else:
+        st.warning(f"No team news found ({fn.note}). Picks for this match are **withheld** until news is "
+                   "available. Add an API-Football key in the sidebar, or check the news yourself.")
+        manual_ok = st.checkbox("I've checked the team news myself and entered missing players below")
+
+    with st.expander("Team news (missing players, rotation)", expanded=fn.found):
         st.caption("Pick players who are **out**. Each one lowers their team's expected goals by that player's share "
                    "of the team's attack (their xG + chances created per 90, from Understat), half-covered "
                    "by the replacement. Use the extra slider for anything else, e.g. heavy rotation 0.90, "
                    "or raise a team to 1.05–1.10 when the *opponent* is missing key defenders.")
-        season_now = int(model_today.history["season"].max())
         n1, n2 = st.columns(2)
-        adj = {}
-        for col, team in ((n1, home), (n2, away)):
+        adj, all_shares = {}, {}
+        for col, team, tn in ((n1, home, fn.home), (n2, away, fn.away)):
             shares = squad_shares(league, team, season_now, tuple(model_today.goals.teams)) \
                 if league in absences_leagues else pd.DataFrame(columns=["player", "share"])
             if shares.empty:
@@ -165,8 +193,10 @@ with tab_match:
                 out = []
             else:
                 label = {r.player: f"{r.player} ({r.share:.0%} of attack)" for r in shares.itertuples()}
-                out = col.multiselect(f"{team}: missing players", list(shares["player"]),
-                                      format_func=label.get, key=f"out::{league}::{team}")
+                news_out = absences.resolve_players(tn.out, shares)[0]
+                out = col.multiselect(f"{team}: missing players", list(shares["player"]), default=news_out,
+                                      format_func=label.get, key=f"out::{league}::{team}::{match_day}::{fn.source}")
+            all_shares[team] = shares
             auto = absences.multiplier(shares, out)
             extra = col.slider(f"{team}: extra adjustment", 0.70, 1.30, 1.00, 0.05, key=f"adj::{league}::{team}")
             adj[team] = auto * extra
@@ -219,12 +249,14 @@ with tab_match:
         saved.clear()
         saved.update(odds)
         book = value.market_probs(odds)
+        bets, skipped = safety.screen(value.find_value(probs, odds), fn, all_shares[home], all_shares[away], manual_ok)
+        withheld = {b.market for b, _ in skipped}
 
         if odds:
             check = pd.DataFrame([{
                 "Market": markets.label(mk), "Your odds": o, "Model": probs[mk],
                 "Bookmaker": book.get(mk), "Edge": 100 * value.edge(probs[mk], o),
-                "Verdict": verdict(mk, probs[mk], o, bankroll),
+                "Verdict": "⛔ Withheld (see below)" if mk in withheld else verdict(mk, probs[mk], o, bankroll),
             } for mk, o in odds.items()])
             st.dataframe(check, hide_index=True, width="stretch", column_config={
                 "Your odds": st.column_config.NumberColumn(format="%.2f"),
@@ -236,7 +268,8 @@ with tab_match:
                 "Verdict": st.column_config.TextColumn(width="medium"),
             }, column_order=["Market", "Your odds", "Model", "Bookmaker", "Edge", "Verdict"])
 
-        bets = value.find_value(probs, odds)
+        for b, reason in skipped:
+            st.warning(f"Withheld **{markets.label(b.market)}** @ {b.odds:.2f}: {reason}")
         if bets:
             st.success(f"{len(bets)} value bet(s) found")
             for b in bets:
@@ -244,8 +277,6 @@ with tab_match:
                 stake_amt = round(b.stake_pct * bankroll, 2)
                 bc1.markdown(f"**{markets.label(b.market)}** @ {b.odds:.2f} — model {b.prob:.1%}, "
                              f"edge {b.edge:+.1%}, stake **{stake_amt:,.0f}** ({b.stake_pct:.1%})")
-                if b.edge > 0.15:
-                    bc1.caption("⚠️ Very large edge: usually means news the model doesn't know. Check lineups first.")
                 if bc2.button("Log bet", key=f"log::{league}::{home}::{away}::{b.market}"):
                     tracker.add({"match_date": str(match_day), "league": league, "home": home, "away": away,
                                  "market": b.market, "odds": b.odds, "stake": stake_amt,
@@ -253,7 +284,7 @@ with tab_match:
                     st.toast(f"Logged {markets.label(b.market)} @ {b.odds}")
                 if bc3.button("Add to slip", key=f"slip::{league}::{home}::{away}::{b.market}"):
                     add_to_slip(slip.Leg(str(match_day), league, home, away, b.market, b.odds, b.prob))
-        elif odds:
+        elif odds and not skipped:
             st.info("No value at these odds. Not betting is the right call.")
 
     with right:
@@ -311,6 +342,7 @@ with tab_list:
                 "BTTS": r["pred"]["probs"]["btts_yes"],
                 "Value bets": ", ".join(f"{markets.label(b.market)} @{b.odds} ({b.edge:+.0%}, "
                                         f"stake {b.stake_pct * bankroll:,.0f})" for b in r["bets"]) or "–",
+                "Withheld": "; ".join(f"{markets.label(b.market)}: {why}" for b, why in r["skipped"]) or "–",
             } for r in results])
             pcols = ["Home", "Draw", "Away", "Over 1.5", "Over 2.5", "BTTS"]
             st.dataframe(summary, hide_index=True, width="stretch",

@@ -178,3 +178,59 @@ class XgMergeTest(unittest.TestCase):
                                                + model.XG_WEIGHT * 1.0) / w)
         self.assertAlmostEqual(t["h_str"][1], (model.GOAL_WEIGHT * 0 + model.SOT_WEIGHT * conv * 3)
                                / (model.GOAL_WEIGHT + model.SOT_WEIGHT))
+
+
+class NewsSafetyTest(unittest.TestCase):
+    known = ["Man City", "Liverpool", "Arsenal"]
+
+    def test_parse_fpl(self):
+        from predictor import news
+        payload = {"teams": [{"id": 1, "name": "Man City"}, {"id": 2, "name": "Liverpool"}],
+                   "elements": [
+                       {"team": 1, "first_name": "Erling", "second_name": "Haaland", "status": "i",
+                        "chance_of_playing_next_round": 0},
+                       {"team": 1, "first_name": "Phil", "second_name": "Foden", "status": "d",
+                        "chance_of_playing_next_round": 50},
+                       {"team": 2, "first_name": "Mohamed", "second_name": "Salah", "status": "a",
+                        "chance_of_playing_next_round": None}]}
+        n = news.parse_fpl(payload, self.known)
+        self.assertEqual(n["Man City"].out, ["Erling Haaland"])
+        self.assertEqual(n["Man City"].doubtful, ["Phil Foden"])
+        self.assertNotIn("Liverpool", n)
+
+    def test_parse_api_football(self):
+        from predictor import news
+        rows = [{"player": {"name": "E. Haaland", "type": "Missing Fixture", "reason": "Injury"},
+                 "team": {"name": "Manchester City"}},
+                {"player": {"name": "B. Saka", "type": "Questionable", "reason": "Knock"},
+                 "team": {"name": "Arsenal"}}]
+        n = news.parse_api_football(rows, self.known)
+        self.assertEqual(n["Man City"].out, ["E. Haaland"])
+        self.assertEqual(n["Arsenal"].doubtful, ["B. Saka"])
+
+    def _shares(self):
+        from predictor import absences
+        return absences.attack_shares(pd.DataFrame({
+            "team": ["T"] * 3, "player": ["Erling Haaland", "Phil Foden", "Ederson"],
+            "minutes": [3000, 2500, 3420], "games": [36, 33, 38],
+            "npxG": [20.0, 6.0, 0.0], "xA": [4.0, 6.0, 0.1]}), "T")
+
+    def test_screen_rules(self):
+        from predictor import news, safety
+        bet = value.Bet("1", 0.6, 1.9, 0.14, 0.02)
+        big = value.Bet("2", 0.5, 2.5, 0.25, 0.02)
+        sh = self._shares()
+        none = news.FixtureNews(False, "", news.TeamNews(), news.TeamNews(), note="no key")
+        kept, skipped = safety.screen([bet], none, sh, sh)
+        self.assertEqual(kept, [])
+        self.assertIn("No team news", skipped[0][1])
+        kept, _ = safety.screen([bet], none, sh, sh, manual_ok=True)
+        self.assertEqual(kept, [bet])
+        ok = news.FixtureNews(True, "FPL", news.TeamNews(), news.TeamNews())
+        kept, skipped = safety.screen([bet, big], ok, sh, sh)
+        self.assertEqual(kept, [bet])
+        self.assertIn("too large", skipped[0][1])
+        doubt = news.FixtureNews(True, "FPL", news.TeamNews(doubtful=["E. Haaland"]), news.TeamNews())
+        kept, skipped = safety.screen([bet], doubt, sh, sh)
+        self.assertEqual(kept, [])
+        self.assertIn("Haaland", skipped[0][1])
