@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import backtest, data, predict
+from . import backtest, calibration, data, predict
 from .model import LeagueModel
 
 
@@ -25,6 +25,8 @@ def main() -> None:
     b.add_argument("--seasons", nargs="+", type=int, default=[data.current_season() - 2, data.current_season() - 1],
                    help="season start years to test, e.g. 2024 2025")
     b.add_argument("--out", type=Path, default=Path("output/backtest.csv"))
+    b.add_argument("--save-calibration", action="store_true",
+                   help="refit the calibration in models/calibration.json from these results")
 
     r = sub.add_parser("ratings", help="show current team ratings for a league")
     r.add_argument("league", choices=sorted(data.LEAGUES))
@@ -57,6 +59,9 @@ def main() -> None:
             print("\n(no historical odds in this data, so no profit test; "
                   "football-data.co.uk files include them)")
         print(f"\nPer-match predictions saved to {args.out}")
+        if args.save_calibration:
+            calibration.save(calibration.fit(res), note=f"fitted on {args.leagues} seasons {args.seasons}")
+            print(f"Calibration saved to {calibration.DEFAULT_PATH}")
 
     elif args.cmd == "ratings":
         now = data.current_season()

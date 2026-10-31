@@ -56,6 +56,27 @@ def find_value(probs: dict[str, float], odds: dict[str, float],
     return sorted(bets, key=lambda b: b.edge, reverse=True)
 
 
+def market_probs(odds: dict[str, float]) -> dict[str, float]:
+    """The bookmaker's own probabilities with its margin removed.
+
+    Only possible where all outcomes of a market have odds: 1/X/2,
+    over/under the same line, BTTS yes/no.
+    """
+    groups = [["1", "X", "2"], ["btts_yes", "btts_no"]]
+    for key in odds:
+        if "over_" in key:
+            groups.append([key, key.replace("over_", "under_")])
+    out = {}
+    for group in groups:
+        prices = [odds.get(k) for k in group]
+        if all(p and p > 1 for p in prices):
+            implied = [1 / p for p in prices]
+            total = sum(implied)
+            out.update({k: i / total for k, i in zip(group, implied)})
+            out[f"margin:{group[0]}"] = total - 1
+    return out
+
+
 def accumulator(legs: list[tuple[float, float]]) -> tuple[float, float, float]:
     """(win probability, combined odds, edge) for independent legs of (prob, odds).
 

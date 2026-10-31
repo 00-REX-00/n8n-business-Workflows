@@ -100,3 +100,24 @@ def outcome(market: str, row) -> float | None:
     if value != value:  # NaN
         return None
     return float(value < line) if side.endswith("under") else float(value > line)
+
+
+def label(market: str) -> str:
+    """Human-readable market name."""
+    fixed = {
+        "1": "Home win", "X": "Draw", "2": "Away win",
+        "1X": "Home or draw (1X)", "X2": "Draw or away (X2)", "12": "Home or away (12)",
+        "dnb_1": "Home, draw no bet", "dnb_2": "Away, draw no bet",
+        "btts_yes": "Both teams score: yes", "btts_no": "Both teams score: no",
+        "home_clean_sheet": "Home clean sheet", "away_clean_sheet": "Away clean sheet",
+    }
+    if market in fixed:
+        return fixed[market]
+    side, line = market.rsplit("_", 1)
+    words = {
+        "over": "Over {} goals", "under": "Under {} goals",
+        "home_over": "Home team over {} goals", "away_over": "Away team over {} goals",
+        "corners_over": "Over {} corners", "corners_under": "Under {} corners",
+        "cards_over": "Over {} cards", "cards_under": "Under {} cards",
+    }
+    return words.get(side, market).format(line)

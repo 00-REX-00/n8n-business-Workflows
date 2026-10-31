@@ -29,7 +29,7 @@ def run(matches: pd.DataFrame, leagues: list[str], seasons: list[int]) -> pd.Dat
             lm = LeagueModel.fit(matches, league, start)
             for _, g in week.iterrows():
                 try:
-                    pred = lm.predict(g["home"], g["away"], g["referee"])
+                    pred = lm.predict(g["home"], g["away"], g["referee"], calibrated=False)
                 except KeyError:
                     continue
                 probs = pred["probs"]

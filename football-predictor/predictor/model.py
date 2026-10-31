@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from . import markets, ratings
+from . import calibration, markets, ratings
 
 HISTORY_SEASONS = 3          # seasons of data each fit uses
 REFEREE_SHRINK = 8           # referee needs ~8 games to move halfway from the league average
@@ -16,6 +16,10 @@ REFEREE_SHRINK = 8           # referee needs ~8 games to move halfway from the l
 SOT_WEIGHT = 0.5
 RIDGE = 4.0
 XI = 0.003
+# Corners and cards are steadier team habits than goals, so their ratings use
+# their own settings.
+COUNT_RIDGE = 20.0
+COUNT_XI = 0.004
 
 
 def _with_card_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -35,6 +39,16 @@ def _dispersion(r: ratings.TeamRatings, df: pd.DataFrame, hcol: str, acol: str) 
     y = (df[hcol] + df[acol]).to_numpy(float)
     alpha = (((y - mean) ** 2).mean() - mean.mean()) / (mean ** 2).mean()
     return float(max(alpha, 0.0))
+
+
+_CALIBRATION: dict | None = None
+
+
+def _calibration() -> dict:
+    global _CALIBRATION
+    if _CALIBRATION is None:
+        _CALIBRATION = calibration.load()
+    return _CALIBRATION
 
 
 @dataclass
@@ -69,10 +83,10 @@ class LeagueModel:
         corners = cards = None
         corner_alpha = card_alpha = 0.0
         if hist[["hc", "ac"]].notna().all(axis=1).sum() > 200:
-            corners = ratings.fit(hist, as_of, "hc", "ac", dixon_coles=False)
+            corners = ratings.fit(hist, as_of, "hc", "ac", xi=COUNT_XI, ridge=COUNT_RIDGE, dixon_coles=False)
             corner_alpha = _dispersion(corners, hist, "hc", "ac")
         if hist[["hcards", "acards"]].notna().all(axis=1).sum() > 200:
-            cards = ratings.fit(hist, as_of, "hcards", "acards", dixon_coles=False)
+            cards = ratings.fit(hist, as_of, "hcards", "acards", xi=COUNT_XI, ridge=COUNT_RIDGE, dixon_coles=False)
             card_alpha = _dispersion(cards, hist, "hcards", "acards")
 
         referee_factor = {}
@@ -95,6 +109,7 @@ class LeagueModel:
         referee: str | None = None,
         home_adj: float = 1.0,
         away_adj: float = 1.0,
+        calibrated: bool = True,
     ) -> dict:
         """Market probabilities for one fixture.
 
@@ -109,7 +124,7 @@ class LeagueModel:
         lam, mu = lam * home_adj, mu * away_adj
         m = ratings.score_matrix(lam, mu, self.goals.rho)
         probs = markets.goal_markets(m)
-        out = {"xg_home": lam, "xg_away": mu, "scores": markets.top_scores(m), "probs": probs}
+        out = {"xg_home": lam, "xg_away": mu, "scores": markets.top_scores(m), "probs": probs, "matrix": m}
 
         if self.corners and self.corners.has(home) and self.corners.has(away):
             c = sum(self.corners.expected(home, away))
@@ -122,6 +137,9 @@ class LeagueModel:
                 out["referee_factor"] = self.referee_factor[referee]
             out["exp_cards"] = c
             probs.update(markets.count_markets("cards", c, self.card_alpha, markets.CARD_LINES))
+        if calibrated:
+            out["raw_probs"] = probs
+            out["probs"] = calibration.apply(probs, _calibration())
         return out
 
     def context(self, home: str, away: str, n: int = 5) -> dict:

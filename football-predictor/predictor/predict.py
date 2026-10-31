@@ -27,12 +27,13 @@ def read_fixtures(path: Path) -> pd.DataFrame:
     return fx
 
 
-def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | None = None) -> pd.DataFrame:
-    leagues = sorted(fixtures["league"].unique())
-    now = data.current_season()
-    matches = data.load_matches(leagues, list(range(now - 3, now + 1)))
+def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tuple[list[dict], list[str]]:
+    """Predict every fixture. Returns (one dict per fixture, warnings)."""
+    if matches is None:
+        now = data.current_season()
+        matches = data.load_matches(sorted(fixtures["league"].unique()), list(range(now - 3, now + 1)))
 
-    rows = []
+    results, warnings = [], []
     models: dict[str, LeagueModel] = {}
     for _, fx in fixtures.iterrows():
         league = fx["league"]
@@ -40,37 +41,52 @@ def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | N
             models[league] = LeagueModel.fit(matches, league, fx["date"])
             last = models[league].history["date"].max()
             if (fx["date"] - last).days > STALE_DAYS:
-                print(f"\n!! WARNING: latest {league} result in the data is {last:%Y-%m-%d}. "
-                      f"Predictions ignore everything since then. Check your internet access "
-                      f"to football-data.co.uk before betting.")
+                warnings.append(f"Latest {league} result in the data is {last:%Y-%m-%d}. Predictions "
+                                f"ignore everything since then. Check your internet access to "
+                                f"football-data.co.uk before betting.")
         lm = models[league]
-        known = lm.goals.teams
         try:
-            home, away = teams.resolve(fx["home"], known), teams.resolve(fx["away"], known)
+            home, away = teams.resolve(fx["home"], lm.goals.teams), teams.resolve(fx["away"], lm.goals.teams)
         except KeyError as exc:
-            print(f"\nskipping {fx['home']} v {fx['away']}: {exc}")
+            warnings.append(f"Skipped {fx['home']} v {fx['away']}: {exc}")
             continue
         referee = fx["referee"] if isinstance(fx["referee"], str) else None
         pred = lm.predict(home, away, referee, fx["home_adj"], fx["away_adj"])
-        ctx = lm.context(home, away)
         odds = {c.split(":", 1)[1]: float(fx[c]) for c in fixtures.columns
                 if c.startswith("odds:") and pd.notna(fx[c])}
-        bets = value.find_value(pred["probs"], odds)
+        results.append({
+            "fx": fx, "league": league, "home": home, "away": away, "pred": pred,
+            "ctx": lm.context(home, away), "odds": odds,
+            "bets": value.find_value(pred["probs"], odds),
+        })
+    return results, warnings
 
-        _print_fixture(fx, home, away, pred, ctx, bets, bankroll)
-        row = {"date": fx["date"].date(), "league": league, "home": home, "away": away,
+
+def to_table(results: list[dict]) -> pd.DataFrame:
+    rows = []
+    for r in results:
+        pred = r["pred"]
+        row = {"date": r["fx"]["date"].date(), "league": r["league"], "home": r["home"], "away": r["away"],
                "xg_home": round(pred["xg_home"], 2), "xg_away": round(pred["xg_away"], 2)}
         row.update({f"p:{k}": round(v, 4) for k, v in pred["probs"].items()})
         row["value_bets"] = "; ".join(f"{b.market}@{b.odds} edge {b.edge:+.1%} stake {b.stake_pct:.1%}"
-                                      for b in bets)
+                                      for b in r["bets"])
         rows.append(row)
+    return pd.DataFrame(rows)
 
-    result = pd.DataFrame(rows)
-    if out_csv is not None and not result.empty:
+
+def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | None = None) -> pd.DataFrame:
+    results, warnings = analyse(fixtures)
+    for w in warnings:
+        print(f"\n!! {w}")
+    for r in results:
+        _print_fixture(r["fx"], r["home"], r["away"], r["pred"], r["ctx"], r["bets"], bankroll)
+    table = to_table(results)
+    if out_csv is not None and not table.empty:
         out_csv.parent.mkdir(parents=True, exist_ok=True)
-        result.to_csv(out_csv, index=False)
+        table.to_csv(out_csv, index=False)
         print(f"\nAll market probabilities written to {out_csv}")
-    return result
+    return table
 
 
 def _print_fixture(fx, home, away, pred, ctx, bets, bankroll):

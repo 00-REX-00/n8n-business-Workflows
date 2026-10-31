@@ -85,3 +85,42 @@ class TeamsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CalibrationTest(unittest.TestCase):
+    def test_apply_keeps_markets_consistent(self):
+        from predictor import calibration
+        raw = markets.goal_markets(ratings.score_matrix(1.7, 0.9, -0.05))
+        raw.update(markets.count_markets("cards", 4.0, 0.05, markets.CARD_LINES))
+        params = {"1": [1.3, 0.05], "X": [1.1, 0.14], "2": [1.3, 0.2],
+                  "over_1.5": [0.9, 0.2], "over_2.5": [1.0, 0.05], "cards_over_3.5": [0.7, 0.1]}
+        p = calibration.apply(raw, params)
+        self.assertAlmostEqual(p["1"] + p["X"] + p["2"], 1, places=9)
+        self.assertAlmostEqual(p["1X"], p["1"] + p["X"], places=9)
+        self.assertAlmostEqual(p["over_2.5"] + p["under_2.5"], 1, places=9)
+        self.assertGreaterEqual(p["over_1.5"], p["over_2.5"])
+        self.assertGreaterEqual(p["cards_over_3.5"], p["cards_over_4.5"])
+        self.assertGreater(p["1"], raw["1"])  # a > 1 sharpens the favourite
+
+
+class MarketProbsTest(unittest.TestCase):
+    def test_removes_margin(self):
+        mp = value.market_probs({"1": 2.0, "X": 3.4, "2": 3.8, "over_2.5": 1.9, "under_2.5": 1.9})
+        self.assertAlmostEqual(mp["1"] + mp["X"] + mp["2"], 1, places=9)
+        self.assertAlmostEqual(mp["over_2.5"], 0.5, places=9)
+        self.assertNotIn("btts_yes", mp)
+
+
+class TrackerTest(unittest.TestCase):
+    def test_profit_and_summary(self):
+        import tempfile
+        from pathlib import Path
+        from predictor import tracker
+        path = Path(tempfile.mkdtemp()) / "bets.csv"
+        tracker.add({"market": "1", "odds": 2.0, "stake": 100, "result": "won", "closing_odds": 1.9}, path)
+        tracker.add({"market": "over_2.5", "odds": 1.8, "stake": 100, "result": "lost"}, path)
+        tracker.add({"market": "X", "odds": 3.4, "stake": 50}, path)
+        s = tracker.summary(tracker.load(path))
+        self.assertEqual((s["bets"], s["settled"], s["pending"]), (3, 2, 1))
+        self.assertAlmostEqual(s["profit"], 0.0)
+        self.assertAlmostEqual(s["hit_rate"], 0.5)

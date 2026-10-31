@@ -4,6 +4,34 @@ A betting model for the top 5 European leagues (more leagues ready to switch on)
 
 **Read "What the backtest says" before you stake money.**
 
+## How it's built (and why)
+
+```
+ football-data.co.uk ──► predictor/ (Python model) ──► app.py (web app you use)
+                                     │                 └─ command line (python -m predictor)
+                                     └──► later: n8n workflow for schedules + Telegram alerts
+```
+
+- **The model is plain Python code**, not an n8n workflow. Statistical fitting, backtests and tests need real code: workflows can't be tested or tuned properly.
+- **The web app (`app.py`, Streamlit)** is how you use it day to day: pick a match, type the SportyBet odds, see value bets, log them, track profit. It runs on your computer in the browser and needs no web development.
+- **n8n comes later** for automation only: fetch fixtures every morning, run the model, send value picks to Telegram. It calls this code; it doesn't replace it.
+
+## Web app
+
+```bash
+streamlit run app.py
+```
+
+It opens at http://localhost:8501.
+
+| Tab | What you do there |
+|---|---|
+| **Match analysis** | Choose teams, referee and team news. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Type the bookmaker's odds next to the model's fair odds, and value bets appear with a stake and a **Log bet** button |
+| **Fixture list** | Upload a CSV of the weekend's matches with odds to analyse them all at once |
+| **Bet tracker** | Every logged bet: set won/lost, add closing odds, see profit, ROI, hit rate, closing-line value and a profit chart |
+| **Team ratings** | Attack vs. defence chart and table for the league |
+| **Model report** | Run the backtest from the browser: scorecard, calibration chart, "safe pick" table and, with odds data, the profit test |
+
 ## What it models
 
 | Area | How |
@@ -14,6 +42,7 @@ A betting model for the top 5 European leagues (more leagues ready to switch on)
 | Goal markets | A full scoreline probability table gives 1X2, double chance, draw no bet, over/under 0.5 to 4.5, team goals, both teams to score (BTTS) and clean sheets |
 | Cards | Team card ratings × referee strictness (shrunk until the referee has enough games); spread modelled with a negative binomial |
 | Corners | Team corner ratings (experimental, see below) |
+| Calibration | A final correction learned from the backtest: the raw model was slightly timid on match results (favourites won more than it said) and overconfident on cards and corners. `models/calibration.json` fixes both |
 | Lineups and injuries | You enter them as `home_adj` / `away_adj` multipliers on expected goals |
 | Form and head-to-head | Printed for you to read; **not** used in the probabilities (see below) |
 
@@ -31,9 +60,11 @@ Walk-forward test of 3,492 matches (2024-25 and 2025-26 seasons, top 5 leagues).
 | Double chance 1X / X2 | 70% / 66% | **+10%**: the model's strongest area |
 | Home team over 0.5 / away team over 0.5 | 77% / 72% | +6% / +3% |
 | Over 1.5 / 2.5 / 3.5 | 77% / 57% / 69% | +1% (small) |
-| Cards over 3.5 / 4.5 | 60% / 60% | +1.5% |
+| Cards over 3.5 / 4.5 | 60% / 61% | +1.9% (after tuning) |
 | BTTS | 55% | ~0, no skill |
-| Corners over 9.5 | 56% | below zero, no skill |
+| Corners over 9.5 | 56% | ~0, no skill |
+
+Calibration then improved every market when tested on a season it hadn't seen (fitted on 2023-24 and 2024-25, tested on 2025-26). Refit it after any model change with `python -m predictor backtest --seasons 2023 2024 2025 --save-calibration`.
 
 The model never calls BTTS or corners a value bet (`NO_SKILL_PREFIXES` in `predictor/value.py`) until they're improved.
 
