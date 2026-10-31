@@ -4,9 +4,12 @@
 #   bash setup.sh predictor.example.com you@example.com yourname
 #
 # Run as root. Point the domain's DNS (an A record) at this server first, or the
-# HTTPS step fails (rerun the script once DNS works). It asks for a password for
-# the first login. Safe to run again.
+# HTTPS step fails (rerun the script once DNS works). EMAIL "-" skips Let's
+# Encrypt's expiry emails. It asks for the first login's password unless
+# PREDICTOR_PASSWORD is set. Safe to run again, and alongside other apps: it
+# only adds firewall rules and never restarts other services.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l   # no prompts, no automatic service restarts
 
 DOMAIN=${1:?usage: setup.sh DOMAIN EMAIL FIRST_LOGIN}
 EMAIL=${2:?usage: setup.sh DOMAIN EMAIL FIRST_LOGIN}
@@ -37,8 +40,12 @@ as_app "$BASE/venv/bin/pip" install --quiet -r "$APP/requirements.txt"
 
 echo "== Logins"
 if [ ! -f "$PASSWORDS" ]; then
-  echo "Choose a password for $FIRST_LOGIN:"
-  htpasswd -B -c "$PASSWORDS" "$FIRST_LOGIN"
+  if [ -n "${PREDICTOR_PASSWORD:-}" ]; then
+    printf '%s\n' "$PREDICTOR_PASSWORD" | htpasswd -B -i -c "$PASSWORDS" "$FIRST_LOGIN"
+  else
+    echo "Choose a password for $FIRST_LOGIN:"
+    htpasswd -B -c "$PASSWORDS" "$FIRST_LOGIN"
+  fi
 fi
 chown root:www-data "$PASSWORDS"
 chmod 640 "$PASSWORDS"
@@ -62,7 +69,8 @@ ufw allow 'Nginx Full'
 ufw --force enable
 
 echo "== HTTPS"
-if certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos --redirect --non-interactive; then
+if [ "$EMAIL" = "-" ]; then contact=(--register-unsafely-without-email); else contact=(-m "$EMAIL"); fi
+if certbot --nginx -d "$DOMAIN" "${contact[@]}" --agree-tos --redirect --non-interactive; then
   echo "HTTPS is on."
 else
   echo "HTTPS failed: check that $DOMAIN points at this server, then run: certbot --nginx -d $DOMAIN"
