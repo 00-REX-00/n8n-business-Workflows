@@ -153,8 +153,12 @@ def load_matches(
     seasons: list[int],
     cache_dir: Path = DEFAULT_CACHE,
     refresh_current: bool = True,
+    with_xg: bool = True,
 ) -> pd.DataFrame:
-    """All finished matches for the given leagues and season start years."""
+    """All finished matches for the given leagues and season start years.
+
+    With `with_xg`, adds Understat expected goals (xg_h, xg_a) where available.
+    """
     frames = []
     now = current_season()
     for league in leagues:
@@ -168,4 +172,8 @@ def load_matches(
     if not frames:
         raise RuntimeError("No match data could be loaded.")
     matches = pd.concat(frames, ignore_index=True)
-    return matches.sort_values(["date", "league", "home"]).reset_index(drop=True)
+    matches = matches.sort_values(["date", "league", "home"]).reset_index(drop=True)
+    if with_xg:
+        from .xg import attach_xg
+        matches = attach_xg(matches, cache_dir)
+    return matches

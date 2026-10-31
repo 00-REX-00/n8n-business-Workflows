@@ -18,16 +18,13 @@ A betting model for the top 5 European leagues (more leagues ready to switch on)
 
 ## Web app
 
-```bash
-streamlit run app.py
-```
-
-It opens at http://localhost:8501.
+The app runs **on your own computer**: start it there, then open http://localhost:8501 in your browser (see [Setup](#setup)). On Windows, double-click `run_app.bat`; on Mac/Linux run `./run_app.sh`.
 
 | Tab | What you do there |
 |---|---|
-| **Match analysis** | Choose teams, referee and team news. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Type the bookmaker's odds next to the model's fair odds, and value bets appear with a stake and a **Log bet** button |
-| **Fixture list** | Upload a CSV of the weekend's matches with odds to analyse them all at once |
+| **Match analysis** | Choose teams, referee and **missing players**. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Type the bookmaker's odds next to the model's fair odds, and value bets appear with a stake, **Log bet** and **Add to slip** |
+| **Fixture list** | Upload a CSV of the weekend's matches with odds to analyse them all at once, then add every value bet to the slip |
+| **Bet slip** | Your picks under SportyBet's market names, singles vs. accumulator maths, warnings, and a copy list for booking on SportyBet |
 | **Bet tracker** | Every logged bet: set won/lost, add closing odds, see profit, ROI, hit rate, closing-line value and a profit chart |
 | **Team ratings** | Attack vs. defence chart and table for the league |
 | **Model report** | Run the backtest from the browser: scorecard, calibration chart, "safe pick" table and, with odds data, the profit test |
@@ -37,13 +34,13 @@ It opens at http://localhost:8501.
 | Area | How |
 |---|---|
 | Team strength | Dixon-Coles ratings (attack and defence per team, home advantage), refitted on every prediction date. Recent games count more: a match a year ago weighs about a third as much as last week's |
-| Chance quality | Ratings learn 50/50 from goals and from shots on target (a free stand-in for expected goals, xG), which settles faster than goals alone |
+| Chance quality | Ratings learn from a blend: 50% Understat expected goals (xG), 25% shots on target, 25% goals. xG measures chance quality, so it shows true strength faster than goals. Where xG is missing, goals and shots on target share the weight |
 | Promoted teams | Start below league average instead of at average |
 | Goal markets | A full scoreline probability table gives 1X2, double chance, draw no bet, over/under 0.5 to 4.5, team goals, both teams to score (BTTS) and clean sheets |
 | Cards | Team card ratings × referee strictness (shrunk until the referee has enough games); spread modelled with a negative binomial |
 | Corners | Team corner ratings (experimental, see below) |
 | Calibration | A final correction learned from the backtest: the raw model was slightly timid on match results (favourites won more than it said) and overconfident on cards and corners. `models/calibration.json` fixes both |
-| Lineups and injuries | You enter them as `home_adj` / `away_adj` multipliers on expected goals |
+| Missing players | Pick who's out; each player's share of the team's attack (their xG + xA per 90, Understat) lowers the team's expected goals, half-covered by the replacement. Haaland out ≈ Man City ×0.90. Extra manual multiplier for rotation etc. |
 | Form and head-to-head | Printed for you to read; **not** used in the probabilities (see below) |
 
 ### Why head-to-head and "form" are shown but not used
@@ -82,7 +79,28 @@ The model is reliable here: when it says 90%, it wins about 90% of the time. But
 
 ## Setup
 
-Requires Python 3.10+.
+The app runs on your computer, not in the cloud. "localhost refused to connect" means it isn't running on your machine yet.
+
+**Windows, first time:**
+
+1. Install [Python 3.12](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"** in the installer.
+2. Install [Git](https://git-scm.com/download/win).
+3. Open **Command Prompt** and download the code (this branch):
+
+   ```bash
+   git clone -b claude/optimistic-hopper-kfj4ww https://github.com/00-REX-00/n8n-business-Workflows.git
+   ```
+
+4. Open the `n8n-business-Workflows\football-predictor` folder and double-click **`run_app.bat`**. The first start installs everything (a few minutes), then your browser opens http://localhost:8501. Keep the black window open while you use the app.
+5. In the app, press **Refresh data** to load the current season.
+
+**Getting updates later:** in Command Prompt, inside `n8n-business-Workflows`:
+
+```bash
+git pull
+```
+
+**Manual start (any system):**
 
 ```bash
 cd football-predictor
@@ -105,7 +123,8 @@ python -m unittest discover -s tests
    | `league` | `E0` Premier League, `SP1` La Liga, `I1` Serie A, `D1` Bundesliga, `F1` Ligue 1 (others in `predictor/data.py`) |
    | `date`, `home`, `away` | Team names as SportyBet writes them are usually recognised. Unknown names show the closest matches, and you add them to `predictor/teams.py` |
    | `referee` | Optional. Improves the cards markets |
-   | `home_adj`, `away_adj` | Optional, default 1.0. Use ~0.85 when the main striker is out, ~0.90 for heavy rotation, ~1.05 when a key player returns |
+   | `home_missing`, `away_missing` | Optional. Players who are out, separated by `;` (surnames work: `Haaland; De Bruyne`) |
+   | `home_adj`, `away_adj` | Optional, default 1.0. Extra multiplier on top: ~0.90 for heavy rotation, ~1.05 when the opponent's key defenders are out |
    | `odds:<market>` | Any of: `1 X 2 1X X2 12 dnb_1 dnb_2 over_1.5 under_1.5 over_2.5 under_2.5 over_3.5 under_3.5 home_over_0.5 away_over_0.5 home_over_1.5 away_over_1.5 btts_yes btts_no cards_over_3.5 cards_under_3.5 corners_over_9.5 …` |
 
 2. **Run the prediction** once lineups are out (about 1 hour before kickoff):
@@ -143,10 +162,25 @@ python -m predictor backtest --leagues N1 P1 E1 --seasons 2024 2025
 
 Even very good betting models make a few percent return over hundreds of bets, with losing weeks along the way. That's not "millions over a weekend". Staking big to chase that is the fastest way to lose a bankroll. Use only money you can afford to lose. If the profit test on your machine shows no edge, don't bet with this model yet.
 
+## SportyBet booking codes
+
+SportyBet has no public API, so the app can't create booking codes itself. The **Bet slip** tab lists your picks under SportyBet's market names (1X2, Double Chance, Over/Under, GG/NG, Home Over/Under, …). Add them on sportybet.com/ng, open the betslip and press **Book Bet**; SportyBet gives you the code to save or share. Odds on SportyBet may differ from the ones you typed: if a price has dropped below the model's fair odds, remove that pick.
+
+Accumulators: the slip shows the combined odds, real win chance and edge. Prefer singles. If you do combine, keep to 2–3 legs that each have value, never two picks from the same match, and stake at most 1% of bankroll.
+
+## Data sources
+
+| Data | Source | Notes |
+|---|---|---|
+| Results, shots, corners, cards, referees, odds | football-data.co.uk (fallback: GitHub mirror for top 5, no odds) | Free |
+| Team xG per match | understat.com (fallback: Premier League copy in vaastav/Fantasy-Premier-League, to 2024-25) | Free, top 5 leagues |
+| Player xG / xA | understat.com (fallback: vibedatascience/understat_players_aggregated) | Free, top 5 leagues |
+
+All downloads are cached in `data/raw/`.
+
 ## Roadmap
 
-1. Run the backtest with odds on your machine (football-data.co.uk) to test whether it profits.
-2. Real xG from Understat for the top 5 leagues (better than shots on target).
-3. Lineups, injuries and suspensions from API-Football (paid) instead of manual `*_adj`.
-4. Test the second-wave leagues (Championship, Eredivisie, Portugal, Belgium, Scotland, Turkey, Greece). Bookmaker prices in smaller leagues are often less sharp.
-5. n8n workflow in this repo: fetch fixtures → run model → send value picks to Telegram.
+1. Run the backtest with odds on your machine (football-data.co.uk) to test whether it profits, then refit the calibration with xG for all 5 leagues: `python -m predictor backtest --seasons 2023 2024 2025 --save-calibration`.
+2. Automatic lineups and injuries from API-Football (paid) instead of picking missing players by hand.
+3. Test the second-wave leagues (Championship, Eredivisie, Portugal, Belgium, Scotland, Turkey, Greece). Bookmaker prices in smaller leagues are often less sharp.
+4. n8n workflow in this repo: fetch fixtures → run model → send value picks to Telegram.

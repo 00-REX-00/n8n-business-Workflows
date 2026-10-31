@@ -1,6 +1,6 @@
-league,date,home,away,referee,home_adj,away_adj,odds:1,odds:X,odds:2,odds:over_1.5,odds:over_2.5,odds:under_2.5,odds:btts_yes,odds:btts_no
-E0,2026-05-24,Arsenal,Burnley,M Oliver,1.0,1.0,1.18,7.50,15.00,1.22,1.62,2.30,2.10,1.70
-E0,2026-05-24,Manchester City,Aston Villa,,1.0,0.9,1.45,4.80,6.50,1.20,1.55,2.45,1.75,2.00
-SP1,2026-05-24,Real Madrid,Atletico Madrid,,1.0,1.0,2.05,3.60,3.50,1.30,1.85,1.95,1.72,2.05
-I1,2026-05-24,Inter Milan,Napoli,,1.0,1.0,2.10,3.30,3.60,1.35,2.00,1.80,1.85,1.90
-D1,2026-05-16,Bayern Munich,Borussia Dortmund,,1.0,1.0,1.45,5.00,6.00,1.12,1.33,3.20,1.55,2.35
+league,date,home,away,referee,home_missing,away_missing,home_adj,away_adj,odds:1,odds:X,odds:2,odds:over_1.5,odds:over_2.5,odds:under_2.5,odds:btts_yes,odds:btts_no
+E0,2026-05-24,Arsenal,Burnley,M Oliver,,,1.0,1.0,1.18,7.50,15.00,1.22,1.62,2.30,2.10,1.70
+E0,2026-05-24,Manchester City,Aston Villa,,Haaland,,1.0,1.0,1.45,4.80,6.50,1.20,1.55,2.45,1.75,2.00
+SP1,2026-05-24,Real Madrid,Atletico Madrid,,,,1.0,1.0,2.05,3.60,3.50,1.30,1.85,1.95,1.72,2.05
+I1,2026-05-24,Inter Milan,Napoli,,,,1.0,1.0,2.10,3.30,3.60,1.35,2.00,1.80,1.85,1.90
+D1,2026-05-16,Bayern Munich,Borussia Dortmund,,,,1.0,1.0,1.45,5.00,6.00,1.12,1.33,3.20,1.55,2.35

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import data, teams, value
+from . import absences, data, teams, value
 from .model import LeagueModel
 
 HEADLINE = ["1", "X", "2", "1X", "X2", "over_1.5", "over_2.5", "under_2.5",
@@ -22,9 +22,22 @@ def read_fixtures(path: Path) -> pd.DataFrame:
     fx["date"] = pd.to_datetime(fx.get("date", pd.Timestamp.today().normalize()))
     for col, default in (("home_adj", 1.0), ("away_adj", 1.0)):
         fx[col] = pd.to_numeric(fx.get(col, default), errors="coerce").fillna(default)
-    if "referee" not in fx:
-        fx["referee"] = None
+    for col in ("referee", "home_missing", "away_missing"):
+        if col not in fx:
+            fx[col] = None
     return fx
+
+
+def _missing_adjustment(lm: LeagueModel, team: str, names, warnings: list[str]) -> tuple[float, list[str]]:
+    """Attack multiplier for players listed as out ("Haaland; De Bruyne")."""
+    if not isinstance(names, str) or not names.strip():
+        return 1.0, []
+    season = int(lm.history["season"].max())
+    shares = absences.team_shares(lm.league, team, season, lm.goals.teams)
+    matched, unknown = absences.resolve_players(names.replace(",", ";").split(";"), shares)
+    if unknown:
+        warnings.append(f"{team}: no player data for {', '.join(unknown)} (ignored)")
+    return absences.multiplier(shares, matched), matched
 
 
 def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tuple[list[dict], list[str]]:
@@ -51,7 +64,10 @@ def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tupl
             warnings.append(f"Skipped {fx['home']} v {fx['away']}: {exc}")
             continue
         referee = fx["referee"] if isinstance(fx["referee"], str) else None
-        pred = lm.predict(home, away, referee, fx["home_adj"], fx["away_adj"])
+        h_mult, h_out = _missing_adjustment(lm, home, fx["home_missing"], warnings)
+        a_mult, a_out = _missing_adjustment(lm, away, fx["away_missing"], warnings)
+        pred = lm.predict(home, away, referee, fx["home_adj"] * h_mult, fx["away_adj"] * a_mult)
+        pred["missing"] = {"home": (h_out, h_mult), "away": (a_out, a_mult)}
         odds = {c.split(":", 1)[1]: float(fx[c]) for c in fixtures.columns
                 if c.startswith("odds:") and pd.notna(fx[c])}
         results.append({
@@ -97,6 +113,10 @@ def _print_fixture(fx, home, away, pred, ctx, bets, bankroll):
     if "exp_corners" in pred:
         print(f"Expected corners {pred['exp_corners']:.1f}   expected cards {pred.get('exp_cards', float('nan')):.1f}"
               + (f" (referee x{pred['referee_factor']:.2f})" if "referee_factor" in pred else ""))
+    for side, team in (("home", home), ("away", away)):
+        out, mult = pred.get("missing", {}).get(side, ([], 1.0))
+        if out:
+            print(f"Missing for {team}: {', '.join(out)} -> attack x{mult:.2f}")
     print(f"Form (last 5, oldest first): {home} {ctx['home_form']} | {away} {ctx['away_form']}")
     if ctx["h2h"]:
         print("Head-to-head: " + " | ".join(ctx["h2h"]))

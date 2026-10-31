@@ -10,10 +10,14 @@ from . import calibration, markets, ratings
 
 HISTORY_SEASONS = 3          # seasons of data each fit uses
 REFEREE_SHRINK = 8           # referee needs ~8 games to move halfway from the league average
-# Ratings learn from a blend of real goals and shots-on-target "expected goals".
-# Shots on target are far less noisy than goals, so they reveal true team
-# strength faster. 0 = goals only.
-SOT_WEIGHT = 0.5
+# Ratings learn from a blend of three measures of attacking output: real goals,
+# shots on target (converted to goals at the league rate) and Understat expected
+# goals (xG) where available. xG and shots are far less noisy than goals, so
+# they reveal true team strength faster. Matches without xG share its weight
+# between goals and shots.
+GOAL_WEIGHT = 0.25
+SOT_WEIGHT = 0.25
+XG_WEIGHT = 0.5
 RIDGE = 4.0
 XI = 0.003
 # Corners and cards are steadier team habits than goals, so their ratings use
@@ -39,6 +43,28 @@ def _dispersion(r: ratings.TeamRatings, df: pd.DataFrame, hcol: str, acol: str) 
     y = (df[hcol] + df[acol]).to_numpy(float)
     alpha = (((y - mean) ** 2).mean() - mean.mean()) / (mean ** 2).mean()
     return float(max(alpha, 0.0))
+
+
+def _strength_target(hist: pd.DataFrame) -> pd.DataFrame | None:
+    """hist with h_str/a_str: the weighted goals/shots/xG blend per match."""
+    if SOT_WEIGHT == 0 and XG_WEIGHT == 0:
+        return None
+    sot = hist.dropna(subset=["hst", "ast"])
+    has_sot = len(sot) > 200
+    conv = ((sot["hg"].sum() + sot["ag"].sum()) / (sot["hst"].sum() + sot["ast"].sum())) if has_sot else 0.0
+    has_xg = hist[["xg_h", "xg_a"]].notna().all(axis=1) if "xg_h" in hist else pd.Series(False, index=hist.index)
+    if not has_sot and not has_xg.any():
+        return None
+
+    out = hist.copy()
+    for side, g, st, xg in (("h", "hg", "hst", "xg_h"), ("a", "ag", "ast", "xg_a")):
+        sot_goals = (conv * out[st]).fillna(out[g]) if has_sot else out[g]
+        xg_val = out[xg] if xg in out else pd.Series(np.nan, index=out.index)
+        w_sot = SOT_WEIGHT if has_sot else 0.0
+        with_xg = (GOAL_WEIGHT * out[g] + w_sot * sot_goals + XG_WEIGHT * xg_val) / (GOAL_WEIGHT + w_sot + XG_WEIGHT)
+        no_xg = (GOAL_WEIGHT * out[g] + w_sot * sot_goals) / (GOAL_WEIGHT + w_sot)
+        out[f"{side}_str"] = np.where(has_xg, with_xg, no_xg)
+    return out
 
 
 _CALIBRATION: dict | None = None
@@ -69,14 +95,9 @@ class LeagueModel:
         hist = hist[hist["season"] > hist["season"].max() - HISTORY_SEASONS]
         hist = _with_card_columns(hist)
         goals = ratings.fit(hist, as_of, xi=XI, ridge=RIDGE)
-        sot = hist.dropna(subset=["hst", "ast"])
-        if SOT_WEIGHT > 0 and len(sot) > 200:
-            conv = (sot["hg"].sum() + sot["ag"].sum()) / (sot["hst"].sum() + sot["ast"].sum())
-            blend = hist.assign(
-                hxg=(1 - SOT_WEIGHT) * hist["hg"] + SOT_WEIGHT * conv * hist["hst"].fillna(hist["hg"] / conv),
-                axg=(1 - SOT_WEIGHT) * hist["ag"] + SOT_WEIGHT * conv * hist["ast"].fillna(hist["ag"] / conv),
-            )
-            strength = ratings.fit(blend, as_of, "hxg", "axg", xi=XI, ridge=RIDGE, dixon_coles=False)
+        target = _strength_target(hist)
+        if target is not None:
+            strength = ratings.fit(target, as_of, "h_str", "a_str", xi=XI, ridge=RIDGE, dixon_coles=False)
             strength.rho = goals.rho
             goals = strength
 

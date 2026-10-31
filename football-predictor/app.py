@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from predictor import backtest, calibration, data, markets, predict, tracker, value
+from predictor import absences, backtest, calibration, data, markets, predict, slip, tracker, value
 from predictor.model import LeagueModel
 
 ROOT = Path(__file__).resolve().parent
@@ -21,6 +21,8 @@ BACKTEST_CSV = ROOT / "output" / "backtest.csv"
 BLUE = "#2a78d6"
 SEQ_LOW, SEQ_HIGH = "#cde2fb", "#0d366b"
 GOOD = "#0ca30c"
+
+absences_leagues = {"E0", "SP1", "I1", "D1", "F1"}
 
 ODDS_MARKETS = [
     "1", "X", "2", "1X", "X2", "12",
@@ -45,6 +47,20 @@ def load_matches(leagues: tuple[str, ...], refresh_token: int) -> pd.DataFrame:
 @st.cache_resource(show_spinner="Fitting model…", max_entries=32)
 def league_model(league: str, as_of: date, refresh_token: int) -> LeagueModel:
     return LeagueModel.fit(load_matches((league,), refresh_token), league, pd.Timestamp(as_of))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Loading player data…")
+def squad_shares(league: str, team: str, season: int, fd_teams: tuple[str, ...]) -> pd.DataFrame:
+    return absences.team_shares(league, team, season, list(fd_teams))
+
+
+def add_to_slip(leg: slip.Leg) -> None:
+    legs = st.session_state.setdefault("slip", [])
+    if any((l.home, l.away, l.market) == (leg.home, leg.away, leg.market) for l in legs):
+        st.toast("Already on the slip")
+        return
+    legs.append(leg)
+    st.toast(f"Added to slip: {leg.home} v {leg.away}, {markets.label(leg.market)}")
 
 
 def load_settings() -> dict:
@@ -118,8 +134,8 @@ if stale_days > predict.STALE_DAYS:
                f"({stale_days} days ago). Predictions ignore everything since then. "
                "If the season is running, press **Refresh data** or check your connection to football-data.co.uk.")
 
-tab_match, tab_list, tab_bets, tab_ratings, tab_report = st.tabs(
-    ["Match analysis", "Fixture list", "Bet tracker", "Team ratings", "Model report"])
+tab_match, tab_list, tab_slip, tab_bets, tab_ratings, tab_report = st.tabs(
+    ["Match analysis", "Fixture list", "Bet slip", "Bet tracker", "Team ratings", "Model report"])
 
 
 # ---------------------------------------------------------------- match analysis
@@ -133,13 +149,29 @@ with tab_match:
     refs = ["(unknown)"] + sorted(model_today.referee_factor)
     referee = c4.selectbox("Referee", refs, help="Only some leagues publish referees. Affects cards.")
 
-    with st.expander("Team news (lineups, injuries, rotation)", expanded=False):
-        st.caption("Scale each team's expected goals for news the ratings can't see. "
-                   "Rough guide: main striker out 0.85–0.90, heavy rotation 0.90, "
-                   "several defenders out → raise the *opponent* to 1.05–1.10.")
+    with st.expander("Team news (missing players, rotation)", expanded=False):
+        st.caption("Pick players who are **out**. Each one lowers their team's expected goals by that player's share "
+                   "of the team's attack (their xG + chances created per 90, from Understat), half-covered "
+                   "by the replacement. Use the extra slider for anything else, e.g. heavy rotation 0.90, "
+                   "or raise a team to 1.05–1.10 when the *opponent* is missing key defenders.")
+        season_now = int(model_today.history["season"].max())
         n1, n2 = st.columns(2)
-        home_adj = n1.slider(f"{home} attack", 0.70, 1.30, 1.00, 0.05)
-        away_adj = n2.slider(f"{away} attack", 0.70, 1.30, 1.00, 0.05)
+        adj = {}
+        for col, team in ((n1, home), (n2, away)):
+            shares = squad_shares(league, team, season_now, tuple(model_today.goals.teams)) \
+                if league in absences_leagues else pd.DataFrame(columns=["player", "share"])
+            if shares.empty:
+                col.caption(f"No player data for {team} (Understat covers the top 5 leagues).")
+                out = []
+            else:
+                label = {r.player: f"{r.player} ({r.share:.0%} of attack)" for r in shares.itertuples()}
+                out = col.multiselect(f"{team}: missing players", list(shares["player"]),
+                                      format_func=label.get, key=f"out::{league}::{team}")
+            auto = absences.multiplier(shares, out)
+            extra = col.slider(f"{team}: extra adjustment", 0.70, 1.30, 1.00, 0.05, key=f"adj::{league}::{team}")
+            adj[team] = auto * extra
+            col.caption(f"{team} expected goals ×{adj[team]:.2f}")
+        home_adj, away_adj = round(adj[home], 3), round(adj[away], 3)
 
     if home == away:
         st.info("Pick two different teams.")
@@ -208,7 +240,7 @@ with tab_match:
         if bets:
             st.success(f"{len(bets)} value bet(s) found")
             for b in bets:
-                bc1, bc2 = st.columns([4, 1])
+                bc1, bc2, bc3 = st.columns([4, 1, 1])
                 stake_amt = round(b.stake_pct * bankroll, 2)
                 bc1.markdown(f"**{markets.label(b.market)}** @ {b.odds:.2f} — model {b.prob:.1%}, "
                              f"edge {b.edge:+.1%}, stake **{stake_amt:,.0f}** ({b.stake_pct:.1%})")
@@ -219,6 +251,8 @@ with tab_match:
                                  "market": b.market, "odds": b.odds, "stake": stake_amt,
                                  "model_prob": round(b.prob, 4), "edge": round(b.edge, 4)})
                     st.toast(f"Logged {markets.label(b.market)} @ {b.odds}")
+                if bc3.button("Add to slip", key=f"slip::{league}::{home}::{away}::{b.market}"):
+                    add_to_slip(slip.Leg(str(match_day), league, home, away, b.market, b.odds, b.prob))
         elif odds:
             st.info("No value at these odds. Not betting is the right call.")
 
@@ -254,8 +288,9 @@ with tab_match:
 
 with tab_list:
     st.subheader("Analyse a list of fixtures")
-    st.caption("Upload a CSV with columns `league, date, home, away` and optionally `referee, home_adj, "
-               "away_adj` and odds columns like `odds:1`, `odds:over_2.5`, `odds:btts_yes`.")
+    st.caption("Upload a CSV with columns `league, date, home, away` and optionally `referee`, "
+               "`home_missing` / `away_missing` (players out, e.g. `Haaland; De Bruyne`), `home_adj`, "
+               "`away_adj` and odds columns like `odds:1`, `odds:over_2.5`, `odds:btts_yes`.")
     example = (ROOT / "examples" / "fixtures_example.csv").read_bytes()
     st.download_button("Download template", example, "fixtures_template.csv", "text/csv")
     upload = st.file_uploader("Fixtures CSV", type="csv")
@@ -280,9 +315,70 @@ with tab_list:
             pcols = ["Home", "Draw", "Away", "Over 1.5", "Over 2.5", "BTTS"]
             st.dataframe(summary, hide_index=True, width="stretch",
                          column_config={c: st.column_config.NumberColumn(format="percent") for c in pcols})
-            st.download_button("Download all market probabilities",
+            all_bets = [(r, b) for r in results for b in r["bets"]]
+            d1, d2 = st.columns(2)
+            if all_bets and d1.button(f"Add all {len(all_bets)} value bets to the slip", type="primary"):
+                for r, b in all_bets:
+                    add_to_slip(slip.Leg(str(r["fx"]["date"].date()), r["league"], r["home"], r["away"],
+                                         b.market, b.odds, b.prob))
+            d2.download_button("Download all market probabilities",
                                predict.to_table(results).to_csv(index=False).encode(),
                                "predictions.csv", "text/csv")
+
+
+# ---------------------------------------------------------------- bet slip
+
+with tab_slip:
+    st.subheader("Bet slip")
+    legs: list[slip.Leg] = st.session_state.setdefault("slip", [])
+    if not legs:
+        st.info("Empty. Use **Add to slip** on value bets in Match analysis or Fixture list.")
+    else:
+        st.markdown("**To get a SportyBet booking code:** add these selections on sportybet.com/ng "
+                    "(same market names below), open the betslip, and press **Book Bet**. SportyBet "
+                    "has no public API, so the code can't be created from here.")
+        table = pd.DataFrame([{
+            "Remove": False, "Date": l.date, "Match": f"{l.home} v {l.away}",
+            "SportyBet market": slip.sportybet_name(l.market)[0], "Pick": slip.sportybet_name(l.market)[1],
+            "Odds": l.odds, "Model": l.prob, "Edge": 100 * l.edge,
+        } for l in legs])
+        edited_slip = st.data_editor(table, hide_index=True, width="stretch", disabled=list(table.columns[1:]),
+                                     column_config={
+                                         "Odds": st.column_config.NumberColumn(format="%.2f"),
+                                         "Model": st.column_config.NumberColumn(format="percent"),
+                                         "Edge": st.column_config.NumberColumn(format="%+.1f%%")},
+                                     key=f"slip_editor::{len(legs)}")
+        s1, s2, s3 = st.columns(3)
+        if s1.button("Remove ticked"):
+            st.session_state.slip = [l for l, rm in zip(legs, edited_slip["Remove"]) if not rm]
+            st.rerun()
+        if s2.button("Clear slip"):
+            st.session_state.slip = []
+            st.rerun()
+
+        info = slip.summary(legs, bankroll)
+        st.markdown("**Singles (recommended)**")
+        q1, q2 = st.columns(2)
+        q1.metric("Total stake", f"{info['singles_stake']:,.0f}")
+        q2.metric("Expected profit", f"{info['singles_expected_profit']:+,.0f}",
+                  help="Average over many repeats if the model's probabilities are right")
+        st.markdown("**As one accumulator**")
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Total odds", f"{info['acca_odds']:,.2f}")
+        a2.metric("Win chance", f"{info['acca_prob']:.1%}")
+        a3.metric("Edge", f"{info['acca_edge']:+.1%}")
+        a4.metric("Suggested stake", f"{info['acca_stake']:,.0f}", help="Quarter Kelly, capped at 1% of bankroll")
+        for w in info["warnings"]:
+            st.warning(w)
+        st.markdown("**Copy list**")
+        st.code(slip.to_text(legs), language=None)
+        if s3.button("Log all as singles in tracker"):
+            for l in legs:
+                tracker.add({"match_date": l.date, "league": l.league, "home": l.home, "away": l.away,
+                             "market": l.market, "odds": l.odds,
+                             "stake": round(value.kelly_stake(l.prob, l.odds) * bankroll, 2),
+                             "model_prob": round(l.prob, 4), "edge": round(l.edge, 4)})
+            st.toast(f"Logged {len(legs)} bets")
 
 
 # ---------------------------------------------------------------- bet tracker

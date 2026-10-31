@@ -124,3 +124,57 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual((s["bets"], s["settled"], s["pending"]), (3, 2, 1))
         self.assertAlmostEqual(s["profit"], 0.0)
         self.assertAlmostEqual(s["hit_rate"], 0.5)
+
+
+class SlipTest(unittest.TestCase):
+    def test_names_and_summary(self):
+        from predictor import slip
+        self.assertEqual(slip.sportybet_name("over_2.5"), ("Over/Under", "Over 2.5"))
+        self.assertEqual(slip.sportybet_name("btts_yes"), ("GG/NG", "GG"))
+        self.assertEqual(slip.sportybet_name("1X"), ("Double Chance", "Home or Draw"))
+        legs = [slip.Leg("2026-05-24", "E0", "A", "B", "1", 2.0, 0.55),
+                slip.Leg("2026-05-24", "E0", "C", "D", "over_2.5", 1.9, 0.56)]
+        s = slip.summary(legs, 10000)
+        self.assertAlmostEqual(s["acca_odds"], 3.8)
+        self.assertAlmostEqual(s["acca_prob"], 0.55 * 0.56)
+        self.assertLessEqual(s["acca_stake"], 10000 * slip.ACCA_MAX_STAKE)
+        self.assertEqual(s["warnings"], [])
+        legs.append(slip.Leg("2026-05-24", "E0", "A", "B", "btts_yes", 1.8, 0.5))
+        self.assertTrue(any("same match" in w for w in slip.summary(legs, 10000)["warnings"]))
+
+
+class AbsencesTest(unittest.TestCase):
+    def players(self):
+        return pd.DataFrame({
+            "team": ["T"] * 4, "player": ["Star Striker", "Winger", "Defender", "Keeper"],
+            "minutes": [3000, 2500, 3000, 3420], "games": [36, 33, 35, 38],
+            "npxG": [20.0, 6.0, 1.0, 0.0], "xA": [4.0, 6.0, 1.0, 0.1]})
+
+    def test_star_matters_more(self):
+        from predictor import absences
+        sh = absences.attack_shares(self.players(), "T")
+        self.assertEqual(sh["player"][0], "Star Striker")
+        star = absences.multiplier(sh, ["Star Striker"])
+        keeper = absences.multiplier(sh, ["Keeper"])
+        self.assertLess(star, keeper)
+        self.assertGreaterEqual(star, absences.MIN_MULTIPLIER)
+        self.assertEqual(absences.multiplier(sh, []), 1.0)
+
+    def test_resolve_surname(self):
+        from predictor import absences
+        sh = absences.attack_shares(self.players(), "T")
+        self.assertEqual(absences.resolve_players(["striker", "Nobody"], sh), (["Star Striker"], ["Nobody"]))
+
+
+class XgMergeTest(unittest.TestCase):
+    def test_strength_target_uses_xg_when_present(self):
+        from predictor import model
+        df = pd.DataFrame({"hg": [3, 0] * 150, "ag": [0, 0] * 150, "hst": [3, 3] * 150, "ast": [1, 1] * 150,
+                           "xg_h": [1.0, np.nan] * 150, "xg_a": [0.5, np.nan] * 150})
+        t = model._strength_target(df)
+        conv = 3 * 150 / (4 * 300)
+        w = model.GOAL_WEIGHT + model.SOT_WEIGHT + model.XG_WEIGHT
+        self.assertAlmostEqual(t["h_str"][0], (model.GOAL_WEIGHT * 3 + model.SOT_WEIGHT * conv * 3
+                                               + model.XG_WEIGHT * 1.0) / w)
+        self.assertAlmostEqual(t["h_str"][1], (model.GOAL_WEIGHT * 0 + model.SOT_WEIGHT * conv * 3)
+                               / (model.GOAL_WEIGHT + model.SOT_WEIGHT))

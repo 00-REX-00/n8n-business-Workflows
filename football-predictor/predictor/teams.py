@@ -46,6 +46,12 @@ ALIASES = {
     "ogc nice": "Nice", "stade brestois": "Brest", "rc strasbourg": "Strasbourg",
     "saint-etienne": "St Etienne", "as saint-etienne": "St Etienne",
     "paris fc": "Paris FC",
+    # Understat spellings
+    "west bromwich albion": "West Brom", "borussia m.gladbach": "M'gladbach",
+    "rasenballsport leipzig": "RB Leipzig", "fc cologne": "FC Koln", "hertha berlin": "Hertha",
+    "arminia bielefeld": "Bielefeld", "greuther fuerth": "Greuther Furth",
+    "fortuna duesseldorf": "Fortuna Dusseldorf", "parma calcio 1913": "Parma", "spal 2013": "Spal",
+    "deportivo la coruna": "La Coruna", "sd huesca": "Huesca", "clermont foot": "Clermont",
 }
 
 
