@@ -1,9 +1,8 @@
 """Bet slips: turn picks into a list you can enter on SportyBet and book.
 
-SportyBet has no public API, so the app can't create a booking code by
-itself. Instead it gives the selections under SportyBet's own market names;
-add them on sportybet.com/ng, press "Book Bet", and SportyBet returns the
-code.
+The app books the slip on SportyBet itself (predictor/sportybet.py). The list
+under SportyBet's own market names is the fallback: add the selections on
+sportybet.com/ng and press "Book Bet".
 """
 from __future__ import annotations
 

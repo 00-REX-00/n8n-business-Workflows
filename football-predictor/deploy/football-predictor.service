@@ -1,0 +1,18 @@
+[Unit]
+Description=Football Predictor (Streamlit, behind nginx)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=predictor
+WorkingDirectory=/opt/predictor/football-predictor
+# Shared mode: no admin controls; each login gets its own bankroll and bet log.
+Environment=PREDICTOR_SHARED=1
+# Kick-off times and "today" in Nigerian time, whatever the server's clock is set to.
+Environment=TZ=Africa/Lagos
+ExecStart=/opt/predictor/venv/bin/python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8501 --server.headless true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

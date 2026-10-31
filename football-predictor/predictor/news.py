@@ -74,16 +74,20 @@ def _cached_json(cache: Path, fetch) -> object:
 # ---------------------------------------------------------------- API-Football
 
 def _api_football(league: str, season: int, day: str, key: str) -> list[dict]:
+    # Refusals are cached like answers, so a plan that can't see this season
+    # (the free plan only covers 2022-2024) isn't asked again for every fixture.
     def fetch():
         req = urllib.request.Request(
             API_FOOTBALL_URL.format(league=API_FOOTBALL_LEAGUES[league], season=season, date=day),
             headers={"x-apisports-key": key})
         with urllib.request.urlopen(req, timeout=30) as resp:
             payload = json.loads(resp.read())
-        if payload.get("errors"):
-            raise RuntimeError(f"API-Football: {payload['errors']}")
-        return payload.get("response", [])
-    return _cached_json(DEFAULT_CACHE / f"news_apif_{league}_{day}.json", fetch)
+        return {"errors": payload.get("errors") or None, "response": payload.get("response", [])}
+    payload = _cached_json(DEFAULT_CACHE / f"news_apif_{league}_{day}.json", fetch)
+    if payload.get("errors"):
+        errors = payload["errors"]
+        raise RuntimeError("; ".join(map(str, errors.values())) if isinstance(errors, dict) else str(errors))
+    return payload["response"]
 
 
 def parse_api_football(rows: list[dict], known_teams: list[str]) -> dict[str, TeamNews]:

@@ -15,6 +15,8 @@ ALIASES = {
     "brighton and hove albion": "Brighton", "afc bournemouth": "Bournemouth",
     "leeds united": "Leeds", "sheffield united": "Sheffield United",
     "leicester city": "Leicester", "ipswich town": "Ipswich",
+    "hull city": "Hull", "coventry city": "Coventry", "norwich city": "Norwich", "luton town": "Luton",
+    "cardiff city": "Cardiff", "swansea city": "Swansea", "stoke city": "Stoke",
     # Spain
     "atletico madrid": "Ath Madrid", "atletico de madrid": "Ath Madrid",
     "athletic bilbao": "Ath Bilbao", "athletic club": "Ath Bilbao",
@@ -52,12 +54,28 @@ ALIASES = {
     "arminia bielefeld": "Bielefeld", "greuther fuerth": "Greuther Furth",
     "fortuna duesseldorf": "Fortuna Dusseldorf", "parma calcio 1913": "Parma", "spal 2013": "Spal",
     "deportivo la coruna": "La Coruna", "sd huesca": "Huesca", "clermont foot": "Clermont",
+    "racing santander": "Santander", "sporting gijon": "Sp Gijon",
+    # SportyBet spellings the word match below can't place
+    "rc deportivo de a coruna": "La Coruna", "como 1907": "Como", "borussia m'gladbach": "M'gladbach",
+    "estac troyes": "Troyes", "queens park rangers": "QPR", "sporting": "Sp Lisbon",
+    "sporting cp": "Sp Lisbon", "sporting lisbon": "Sp Lisbon", "union gilloise": "St. Gilloise",
+    "union saint-gilloise": "St. Gilloise", "amed sportif faaliyetler": "Amedspor", "goztepe izmir": "Goztep",
+    "goztepe": "Goztep", "istanbul bb": "Buyuksehyr", "istanbul basaksehir": "Buyuksehyr",
+    "heart of midlothian fc": "Hearts", "heart of midlothian": "Hearts", "1 fc nuremberg": "Nurnberg",
+    "1. fc nurnberg": "Nurnberg", "nuremberg": "Nurnberg", "rc celta fortuna": "Celta B",
+    "celta fortuna": "Celta B", "panaitolikos agrinio": "Panetolikos", "panaitolikos": "Panetolikos",
 }
+GENERIC_WORDS = {"fc", "afc", "cf", "sc", "ac", "as", "ssc", "calcio", "club"}
+
+
+def _words(name: str) -> set[str]:
+    return set(re.split(r"[^a-z0-9]+", _clean(name))) - GENERIC_WORDS - {""}
 
 
 def _clean(name: str) -> str:
     name = name.lower().strip()
-    for a, b in (("ü", "u"), ("ö", "o"), ("é", "e"), ("è", "e"), ("á", "a"), ("í", "i"), ("ó", "o")):
+    for a, b in (("ü", "u"), ("ö", "o"), ("é", "e"), ("è", "e"), ("á", "a"), ("í", "i"), ("ó", "o"),
+                 ("´", "'"), ("’", "'"), ("`", "'")):
         name = name.replace(a, b)
     return re.sub(r"\s+", " ", name)
 
@@ -79,6 +97,12 @@ def resolve(name: str, known: list[str]) -> str:
     close = difflib.get_close_matches(stripped, list(lookup), n=1, cutoff=0.75)
     if close:
         return lookup[close[0]]
+    # Last resort: exactly one known team whose every word appears in the name,
+    # e.g. "Blackburn Rovers" -> "Blackburn", "Besiktas Istanbul" -> "Besiktas".
+    words = _words(name)
+    within = [k for k in known if _words(k) and _words(k) <= words]
+    if len(within) == 1:
+        return within[0]
     hint = difflib.get_close_matches(stripped, list(lookup), n=3, cutoff=0.4)
     raise KeyError(f"Unknown team {name!r}. Closest: {[lookup[h] for h in hint]}. "
                    f"Add it to ALIASES in predictor/teams.py.")

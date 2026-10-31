@@ -22,9 +22,11 @@ The app runs **on your own computer**: start it there, then open http://localhos
 
 | Tab | What you do there |
 |---|---|
-| **Match analysis** | Choose teams, referee and **missing players**. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Type the bookmaker's odds next to the model's fair odds, and value bets appear with a stake, **Log bet** and **Add to slip** |
-| **Fixture list** | Upload a CSV of the weekend's matches with odds to analyse them all at once, then add every value bet to the slip |
-| **Bet slip** | Your picks under SportyBet's market names, singles vs. accumulator maths, warnings, and a copy list for booking on SportyBet |
+| **Match analysis** | Pick one of the league's upcoming fixtures (or any two teams), the referee and **missing players**. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Each market shows the model's fair odds, the **Bet at odds** range and the bookmaker average; type SportyBet's odds and value bets appear with a stake, **Log bet** and **Add to slip** |
+| **Fixtures** | Loads itself: every match in the chosen competitions for today or the next 2–7 days, fetched online, with probabilities, bookmaker average odds and value bets at those odds. Pick any match for the full breakdown. Uploading your own CSV with SportyBet odds still works underneath |
+| **Bet of the day** | An accumulator near your target odds (default 10) from all 16 leagues, built for the highest chance of winning, with one click to a SportyBet booking code. See [Bet of the day](#bet-of-the-day) |
+| **Results** | Pick a day: every finished match with the model's call, the bookmaker favourite, the top pick and the value bets graded against the final score (ESPN), plus how many wins the model expected. Predictions are rebuilt from data before that day, so the model never sees the scores. Same from the command line: `python -m predictor review --date 2026-10-31` |
+| **Bet slip** | Your picks, singles vs. accumulator maths and warnings. **Get SportyBet booking code** books the slip on SportyBet and gives you the code; a copy list under SportyBet's market names is the fallback |
 | **Bet tracker** | Every logged bet: set won/lost, add closing odds, see profit, ROI, hit rate, closing-line value and a profit chart |
 | **Team ratings** | Attack vs. defence chart and table for the league |
 | **Model report** | Run the backtest from the browser: scorecard, calibration chart, "safe pick" table and, with odds data, the profit test |
@@ -41,7 +43,8 @@ The app runs **on your own computer**: start it there, then open http://localhos
 | Corners | Team corner ratings (experimental, see below) |
 | Calibration | A final correction learned from the backtest: the raw model was slightly timid on match results (favourites won more than it said) and overconfident on cards and corners. `models/calibration.json` fixes both |
 | Missing players | Pick who's out; each player's share of the team's attack (their xG + xA per 90, Understat) lowers the team's expected goals, half-covered by the replacement. Haaland out ≈ Man City ×0.90. Extra manual multiplier for rotation etc. |
-| Form and head-to-head | Printed for you to read; **not** used in the probabilities (see below) |
+| Form and head-to-head | Shown for you to read, with date, opponent and score, newest first; **not** used in the probabilities (see below). Head-to-head covers 10 seasons of league meetings including the division above or below, so meetings from before a promotion appear. Cup games aren't in the data |
+| Best picks | For each match, the model's most likely outcomes in markets where the backtest showed skill (result, double chance, team to score, total goals), skipping anything above 80% because those pay too little. Each comes with the odds range where it's value; below that range a pick can win often and still lose money. The play-safe rules withhold picks the same way as value bets (`predictor/picks.py`) |
 
 ### Why head-to-head and "form" are shown but not used
 
@@ -75,7 +78,18 @@ The model never calls BTTS or corners a value bet (`NO_SKILL_PREFIXES` in `predi
 
 The model is reliable here: when it says 90%, it wins about 90% of the time. But bookmakers price these near 1.05–1.15, so the odds usually leave no profit. **High hit rate is not the same as profit.** That's why the tool compares with real odds instead of picking "sure" games.
 
-**No profit test yet.** The data reachable in the build environment has no odds. On your machine, the data downloads straight from football-data.co.uk, which includes closing odds. Run the backtest there and it adds a "value bets at historical closing odds" table: the profit test that matters. Don't stake real money before you've seen that table.
+**Profit test (run October 2026, with closing odds).** To keep it honest, the calibration was refitted on 2023-24 and 2024-25 only, then the app's exact rules (edge ≥ 5%, probability ≥ 25%, odds ≤ 4.0, edge ≤ 15%) were replayed on 2,158 matches it had never seen (2025-26 and 2026-27 so far), at football-data.co.uk's closing odds (Pinnacle first):
+
+| | Bets | Result |
+|---|---|---|
+| Value bets, all | 1,160 | **−8.0% ROI** (−92.8 units at level stakes) |
+| Home win / away win / draw | 203 / 242 / 114 | −22.7% / −17.8% / −4.6% |
+| Over 2.5 / under 2.5 | 387 / 214 | +1.6% / −2.2% |
+| Edge 5–10% vs 10–15% | 719 / 441 | −4.7% vs −13.4% |
+| Top picks (one per match) | 2,158 | won 74.1%, model expected 75.6% |
+| Picks whose closing odds were inside "bet at" | 139 | +10.6% (too few to tell skill from luck) |
+
+Bookmakers' closing odds were also more accurate than the model on match results (log loss 0.973 vs 0.987). What it means: the model's probabilities are honest (picks win about as often as it says), but it does not beat the bookmakers, and betting its "value" signals lost money. Bigger edges lost more, so the gaps between model and market are mostly model error. Until that changes, treat the app as an analysis tool, stake small or not at all, and let the Bet tracker's closing-line value tell you whether you have an edge. Rerun: `python -m predictor backtest --seasons 2024 2025`.
 
 ## Setup
 
@@ -114,7 +128,51 @@ pip install -r requirements.txt
 python -m unittest discover -s tests
 ```
 
+## Run it on your VPS (you and invited friends)
+
+`deploy/` puts the app on a Linux VPS (Ubuntu or Debian, 2 GB RAM or more) at your own address, behind a login. Only people you add can open it.
+
+On the server the app runs in **shared mode**: no API key field, no Refresh data, no backtest or calibration buttons, so nobody can change the model. Each login gets its own bankroll and bet log (`data/users/<login>/`); the bet slip is per browser session. Times are Nigerian (WAT).
+
+1. **Point a subdomain at the VPS.** In your domain's DNS settings (at your web host, or Contabo's DNS Management), add an **A record**: name `predictor` (or anything), value = your VPS's IP address. Wait until `predictor.yourdomain.com` resolves.
+2. **Log in to the VPS** from PowerShell on your PC: `ssh root@YOUR_VPS_IP`
+3. **Install** (asks you to choose your own login password; takes 10–15 minutes including the first data download):
+
+   ```bash
+   apt-get update && apt-get install -y git
+   git clone -b claude/optimistic-hopper-kfj4ww https://github.com/00-REX-00/n8n-business-Workflows.git /tmp/fp
+   bash /tmp/fp/football-predictor/deploy/setup.sh predictor.yourdomain.com you@email.com yourname
+   ```
+
+4. **Open** `https://predictor.yourdomain.com` and log in.
+
+Add or remove friends (each gets their own login and password; changes apply at once):
+
+```bash
+bash /opt/predictor/football-predictor/deploy/friends.sh add tunde
+```
+
+```bash
+bash /opt/predictor/football-predictor/deploy/friends.sh remove tunde
+```
+
+**Updating:** push your changes to the branch on GitHub, then on the VPS run `bash /opt/predictor/football-predictor/deploy/update.sh`.
+
+**Owner-only jobs** run on the server's command line, from `/opt/predictor/football-predictor` as the app user, e.g. a new backtest: `runuser -u predictor -- ../venv/bin/python -m predictor backtest --seasons 2024 2025`. A paid API-Football key goes in the service, never in the page: `systemctl edit football-predictor`, add `[Service]` and `Environment=API_FOOTBALL_KEY=yourkey`, then `systemctl restart football-predictor`.
+
 ## Daily use
+
+**In the app:** open **Fixtures**. The next three days' matches load themselves (football-data.co.uk for every league, plus Understat's schedule for the top 5). For each market, **Bet at odds** is the range of odds where a bet is value and passes the play-safe rules: if SportyBet's price falls inside it, it's a candidate. Below it there's no value; above it the edge is over 15% and the model is probably missing news.
+
+**From the command line** (also what an n8n schedule would call):
+
+```bash
+python -m predictor upcoming --days 3 --bankroll 50000
+```
+
+Value bets there use the bookmaker average odds from football-data.co.uk; SportyBet often pays a little less, so check its price before betting.
+
+**With your own odds file:**
 
 1. **Fill in the fixtures file.** Copy `examples/fixtures_example.csv` (its odds are made up) and fill in the matches and the SportyBet odds you see:
 
@@ -156,7 +214,7 @@ python -m predictor backtest --leagues N1 P1 E1 --seasons 2024 2025
 
 A value bet only becomes a pick if it passes all three:
 
-1. **No news, no bet.** The app looks up injuries and suspensions for every fixture: API-Football for all leagues (free key, 100 requests/day: [dashboard.api-football.com](https://dashboard.api-football.com)), plus Fantasy Premier League for the Premier League (no key). Players who are out are applied automatically. If no source answers, the fixture's picks are **withheld**. You can override with "I've checked the team news myself" (`news_checked=yes` column in the fixtures file).
+1. **No news, no bet.** The app looks up injuries and suspensions for every fixture: Fantasy Premier League for the Premier League (free, no key), and API-Football for other leagues. API-Football's free plan only covers the 2022–2024 seasons, so current team news outside the Premier League needs a paid plan ([dashboard.api-football.com](https://dashboard.api-football.com)). Other free sources tested in October 2026 didn't work: ESPN's feed has no football injuries, Sofascore blocks programs, LaLiga Fantasy's feed was down. Players who are out are applied automatically. If no source answers, the fixture's picks are **withheld**. You can override with "I've checked the team news myself" in Match analysis (`news_checked=yes` column in the fixtures file).
 2. **Key player doubtful → no bet.** If a player with ≥10% of their team's attack is doubtful, the model can't know whether they play, so the fixture is skipped.
 3. **Edge above 15% → no bet.** Real edges are small; a huge one almost always means the model is missing something (motivation, rotation, late news).
 
@@ -173,9 +231,28 @@ Withheld picks are listed with the reason, so you can see what was skipped.
 
 Even very good betting models make a few percent return over hundreds of bets, with losing weeks along the way. That's not "millions over a weekend". Staking big to chase that is the fastest way to lose a bankroll. Use only money you can afford to lose. If the profit test on your machine shows no edge, don't bet with this model yet.
 
+## Bet of the day
+
+Pick the day and how likely each leg must be (default 65%). Every leg must be rated at least that likely by **both** SportyBet's own odds (margin removed) and the model, pass the play-safe rules, and come from a different match. For each ticket the app searches every combination for the one whose total odds land between the target and 35% above it with the **highest chance that every leg wins** (`predictor/acca.py`), shows that chance, and books it on SportyBet with one click. Each ticket gets its own booking code.
+
+- **Best from all leagues** (default 10 odds): the best ticket, plus a 2nd and 3rd best that use different matches.
+- **One per league** (default 3 odds, since a league usually has only a few matches a day): the best ticket within each league. Leagues that can't reach the target that day are listed as "no solid bet today". A typical 3-odds league ticket wins about 1 time in 3.5.
+
+Three things to know:
+
+- **The chance comes from SportyBet's odds, not the model.** In the backtest the bookmakers' odds predicted results better than the model in every market, and mixing the model in made them worse. The model is a second opinion: it can veto a leg, not add one.
+- **Short legs aren't the safe way to big odds.** Each leg carries the bookmaker's margin, so for the same total odds, nine legs at 1.30 win less often than four at 1.78. The search picks whatever combination wins most often.
+- **By SportyBet's own prices, every accumulator loses on average.** A typical 10-odds ticket wins about 1 time in 12 and returns about ₦80 per ₦100 staked over time. Treat it as entertainment and keep the stake to 1% of your bankroll or less.
+
+Free team news only covers the Premier League, so by default the ticket can only use Premier League matches. Tick "I've checked the team news" (the same override as in Match analysis) to use the other leagues, after checking the news for the matches marked ✗.
+
 ## SportyBet booking codes
 
-SportyBet has no public API, so the app can't create booking codes itself. The **Bet slip** tab lists your picks under SportyBet's market names (1X2, Double Chance, Over/Under, GG/NG, Home Over/Under, …). Add them on sportybet.com/ng, open the betslip and press **Book Bet**; SportyBet gives you the code to save or share. Odds on SportyBet may differ from the ones you typed: if a price has dropped below the model's fair odds, remove that pick.
+**Get SportyBet booking code** in the **Bet slip** tab books your slip on SportyBet and shows the code and a link. It uses the same Book Bet service a visitor uses on sportybet.com (`predictor/sportybet.py`): no login, no stake, no bet placed. You load the code on SportyBet, pick singles or a multiple, set the stake and confirm there. Before booking, each selection is re-checked against SportyBet's current odds and flagged if it has dropped out of its value range.
+
+The app also reads SportyBet's current odds for every fixture it lists (16 leagues), so **Fixtures** values bets and picks at SportyBet's real prices, and **Match analysis** fills "Your odds" with them. Matches SportyBet doesn't list fall back to the bookmaker average.
+
+SportyBet has no public API: this reads the data its own website loads, so it can break whenever SportyBet changes the site, and automated use may be against its terms. If it stops working, the list under SportyBet's market names below the slip still works: add them on sportybet.com/ng and press **Book Bet**. Other Nigerian bookmakers (Bet9ja, BetKing, MSport, 1xBet, Betway) aren't connected.
 
 Accumulators: the slip shows the combined odds, real win chance and edge. Prefer singles. If you do combine, keep to 2–3 legs that each have value, never two picks from the same match, and stake at most 1% of bankroll.
 
@@ -184,6 +261,10 @@ Accumulators: the slip shows the combined odds, real win chance and edge. Prefer
 | Data | Source | Notes |
 |---|---|---|
 | Results, shots, corners, cards, referees, odds | football-data.co.uk (fallback: GitHub mirror for top 5, no odds) | Free |
+| Upcoming fixtures, referees, bookmaker average odds | football-data.co.uk `fixtures.csv` (next few days, all leagues) + Understat schedule (top 5, whole season) | Free |
+| Latest results football-data hasn't added yet | Understat (goals and xG; football-data stays the authority on dates and home/away) | Free |
+
+**Checked:** football-data.co.uk and Understat results were compared match by match for the top 5 leagues, 2016-17 to 2026-27 (about 18,000 matches). Scores agree everywhere except matches awarded by the authorities, where football-data has the official result (Union Berlin v Bochum 2024, Sassuolo v Pescara 2016). Where Understat had home and away swapped (Rennes v PSG, Aug 2026), football-data was right. This season's results refresh automatically every 6 hours.
 | Team xG per match | understat.com (fallback: Premier League copy in vaastav/Fantasy-Premier-League, to 2024-25) | Free, top 5 leagues |
 | Player xG / xA | understat.com (fallback: vibedatascience/understat_players_aggregated) | Free, top 5 leagues |
 | Injuries, suspensions | API-Football `/injuries` (key in the app sidebar or `API_FOOTBALL_KEY`); Fantasy Premier League | Free tier 100 requests/day; paid plans from about $19/month |

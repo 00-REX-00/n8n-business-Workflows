@@ -3,11 +3,14 @@
 Primary source: football-data.co.uk (free CSVs, results + shots + corners +
 cards + referee + bookmaker odds, including Pinnacle closing odds).
 Fallback: the GitHub mirror at github.com/datasets/football-datasets, which has
-results and match stats for the top 5 leagues but no odds.
+results and match stats for the top 5 leagues but no odds; used only when
+football-data fails and there is no cached copy.
+Results football-data hasn't added yet come from Understat (xg.add_recent_results).
 """
 from __future__ import annotations
 
 import io
+import time
 import urllib.request
 from datetime import date
 from pathlib import Path
@@ -51,6 +54,7 @@ MIRROR_URL = (
 )
 
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data" / "raw"
+CURRENT_TTL_HOURS = 6    # football-data.co.uk adds results a few times a week
 
 # Odds columns in football-data.co.uk files, best first: Pinnacle closing,
 # market-average closing, Bet365 pre-match.
@@ -96,24 +100,28 @@ def _decode(raw: bytes) -> str:
 def _fetch_raw(league: str, season: int, cache_dir: Path, refresh: bool) -> pd.DataFrame:
     code = season_code(season)
     cache = cache_dir / f"{league}_{code}.csv"
-    if cache.exists() and not refresh:
+    stale = (season == current_season() and cache.exists()
+             and time.time() - cache.stat().st_mtime > CURRENT_TTL_HOURS * 3600)
+    if cache.exists() and not refresh and not stale:
         return pd.read_csv(cache)
 
-    urls = [FD_URL.format(code=code, league=league)]
-    if league in MIRROR_SLUGS:
-        urls.append(MIRROR_URL.format(slug=MIRROR_SLUGS[league], code=code))
-
-    errors = []
-    for url in urls:
-        try:
-            text = _decode(_download(url))
-        except Exception as exc:  # network blocked, 404 for a future season, ...
-            errors.append(f"{url}: {exc}")
-            continue
-        df = pd.read_csv(io.StringIO(text), on_bad_lines="skip")
+    url = FD_URL.format(code=code, league=league)
+    try:
+        df = pd.read_csv(io.StringIO(_decode(_download(url))), on_bad_lines="skip")
         cache_dir.mkdir(parents=True, exist_ok=True)
         df.to_csv(cache, index=False)
         return df
+    except Exception as exc:  # network blocked, 404 for a future season, ...
+        errors = [f"{url}: {exc}"]
+    if cache.exists():  # keep the last good copy rather than a lesser source
+        return pd.read_csv(cache)
+    if league in MIRROR_SLUGS:
+        # The mirror has no odds, so it isn't cached: football-data is tried again next time.
+        url = MIRROR_URL.format(slug=MIRROR_SLUGS[league], code=code)
+        try:
+            return pd.read_csv(io.StringIO(_decode(_download(url))), on_bad_lines="skip")
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
     raise RuntimeError(f"Could not load {league} {code}:\n  " + "\n  ".join(errors))
 
 
@@ -157,7 +165,8 @@ def load_matches(
 ) -> pd.DataFrame:
     """All finished matches for the given leagues and season start years.
 
-    With `with_xg`, adds Understat expected goals (xg_h, xg_a) where available.
+    With `with_xg`, adds Understat expected goals (xg_h, xg_a) where available,
+    and this season's results Understat has but football-data hasn't added yet.
     """
     frames = []
     now = current_season()
@@ -174,6 +183,6 @@ def load_matches(
     matches = pd.concat(frames, ignore_index=True)
     matches = matches.sort_values(["date", "league", "home"]).reset_index(drop=True)
     if with_xg:
-        from .xg import attach_xg
-        matches = attach_xg(matches, cache_dir)
+        from .xg import add_recent_results, attach_xg
+        matches = add_recent_results(attach_xg(matches, cache_dir))
     return matches

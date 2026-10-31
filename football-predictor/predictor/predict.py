@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import absences, data, news, safety, teams, value
+from . import absences, data, markets, news, picks, safety, teams, value
 from .model import LeagueModel
 
 HEADLINE = ["1", "X", "2", "1X", "X2", "over_1.5", "over_2.5", "under_2.5",
@@ -15,13 +15,18 @@ STALE_DAYS = 21
 
 
 def read_fixtures(path: Path) -> pd.DataFrame:
-    fx = pd.read_csv(path)
+    return normalise_fixtures(pd.read_csv(path))
+
+
+def normalise_fixtures(fx: pd.DataFrame) -> pd.DataFrame:
+    """Fill the optional columns `analyse` expects, for a file or fetched fixtures."""
+    fx = fx.copy()
     missing = {"league", "home", "away"} - set(fx.columns)
     if missing:
         raise ValueError(f"fixtures file is missing columns: {sorted(missing)}")
     fx["date"] = pd.to_datetime(fx.get("date", pd.Timestamp.today().normalize()))
     for col, default in (("home_adj", 1.0), ("away_adj", 1.0)):
-        fx[col] = pd.to_numeric(fx.get(col, default), errors="coerce").fillna(default)
+        fx[col] = pd.to_numeric(fx[col], errors="coerce").fillna(default) if col in fx else default
     for col in ("referee", "home_missing", "away_missing"):
         if col not in fx:
             fx[col] = None
@@ -83,7 +88,8 @@ def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tupl
         results.append({
             "fx": fx, "league": league, "home": home, "away": away, "pred": pred,
             "ctx": lm.context(home, away), "odds": odds, "news": fn,
-            "bets": bets, "skipped": skipped,
+            "bets": bets, "skipped": skipped, "picks": picks.best_picks(pred["probs"]),
+            "withheld": safety.fixture_reason(fn, h_sh, a_sh, manual_ok),
         })
     return results, warnings
 
@@ -101,12 +107,17 @@ def to_table(results: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | None = None) -> pd.DataFrame:
-    results, warnings = analyse(fixtures)
+def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | None = None,
+        matches: pd.DataFrame | None = None) -> pd.DataFrame:
+    results, warnings = analyse(fixtures, matches)
     for w in warnings:
         print(f"\n!! {w}")
     for r in results:
         _print_fixture(r["fx"], r["home"], r["away"], r["pred"], r["ctx"], r["bets"], bankroll, r["skipped"])
+        if r["picks"]:
+            tips = ", ".join(f"{markets.label(p.market)} {p.prob:.0%} (bet at {p.odds_range[0]:.2f}-"
+                             f"{p.odds_range[1]:.2f})" for p in r["picks"])
+            print(f"Best picks{' (withheld: ' + r['withheld'] + ')' if r['withheld'] else ''}: {tips}")
     table = to_table(results)
     if out_csv is not None and not table.empty:
         out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +128,8 @@ def run(fixtures: pd.DataFrame, out_csv: Path | None = None, bankroll: float | N
 
 def _print_fixture(fx, home, away, pred, ctx, bets, bankroll, skipped=()):
     print("\n" + "=" * 72)
-    print(f"{fx['date']:%a %d %b %Y}  [{data.LEAGUES.get(fx['league'], fx['league'])}]  {home} v {away}")
+    when = f"{fx['kickoff']:%a %d %b %Y %H:%M}" if pd.notna(fx.get("kickoff")) else f"{fx['date']:%a %d %b %Y}"
+    print(f"{when}  [{data.LEAGUES.get(fx['league'], fx['league'])}]  {home} v {away}")
     print(f"Expected goals {pred['xg_home']:.2f} - {pred['xg_away']:.2f}   "
           f"likely scores: " + ", ".join(f"{s} ({p:.0%})" for s, p in pred["scores"]))
     if "exp_corners" in pred:

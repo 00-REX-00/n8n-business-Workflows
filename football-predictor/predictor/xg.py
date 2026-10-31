@@ -9,9 +9,11 @@ Everything is cached in data/raw.
 """
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import re
+import time
 import urllib.request
 from pathlib import Path
 
@@ -31,10 +33,28 @@ PLAYERS_MIRROR_URL = ("https://raw.githubusercontent.com/vibedatascience/underst
 
 # ---------------------------------------------------------------- understat.com
 
-def _understat_league_json(league: str, season: int) -> dict:
-    """{'dates': [...], 'players': [...]} for one Understat league season.
+# One league season's reply feeds xG, player shares and the fixture list, often
+# within the same minute, so it is kept in memory for a while.
+PAYLOAD_TTL_SECONDS = 3 * 3600
+_payloads: dict[tuple[str, int], tuple[float, dict]] = {}
 
-    Understat has served this both as an AJAX endpoint and as JSON embedded in
+
+def clear_cache() -> None:
+    _payloads.clear()
+
+
+def _understat_league_json(league: str, season: int) -> dict:
+    """{'dates': [...], 'players': [...]} for one Understat league season."""
+    hit = _payloads.get((league, season))
+    if hit and time.time() - hit[0] < PAYLOAD_TTL_SECONDS:
+        return hit[1]
+    payload = _fetch_understat_league_json(league, season)
+    _payloads[(league, season)] = (time.time(), payload)
+    return payload
+
+
+def _fetch_understat_league_json(league: str, season: int) -> dict:
+    """Understat has served this both as an AJAX endpoint and as JSON embedded in
     the league page; try both.
     """
     code = UNDERSTAT_LEAGUES[league]
@@ -44,7 +64,10 @@ def _understat_league_json(league: str, season: int) -> dict:
             headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest",
                      "Referer": f"https://understat.com/league/{code}/{season}"})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            payload = json.loads(resp.read())
+            raw = resp.read()
+        if raw[:2] == b"\x1f\x8b":  # Understat gzips the reply even when not asked to
+            raw = gzip.decompress(raw)
+        payload = json.loads(raw)
         if payload.get("dates"):
             return payload
     except Exception:
@@ -155,6 +178,55 @@ def attach_xg(matches: pd.DataFrame, cache_dir: Path = DEFAULT_CACHE) -> pd.Data
     out["xg_h"] = merged["xg_h"].reindex(out.index)
     out["xg_a"] = merged["xg_a"].reindex(out.index)
     return out
+
+
+RECENT_DAYS = 10   # football-data.co.uk is at most a few days behind
+
+
+def missing_results(fd: pd.DataFrame, dates: list[dict], league: str, season: int) -> pd.DataFrame:
+    """Understat results from the last RECENT_DAYS before football-data's latest
+    match that football-data doesn't have. A match football-data lists within
+    3 days, either way round, counts as present: it is the authority on dates
+    and home/away (Understat once had Rennes v PSG backwards).
+    """
+    fd_names = sorted(set(fd["home"]) | set(fd["away"]))
+    since = fd["date"].max() - pd.Timedelta(days=RECENT_DAYS)
+    played = [d for d in dates if d.get("isResult") and pd.Timestamp(d["datetime"]).normalize() > since]
+    names = _match_names([d["h"]["title"] for d in played] + [d["a"]["title"] for d in played], fd_names)
+    rows = []
+    for d in played:
+        home, away = names.get(d["h"]["title"]), names.get(d["a"]["title"])
+        if home is None or away is None:
+            continue
+        day = pd.Timestamp(d["datetime"]).normalize()
+        pair = fd[((fd["home"] == home) & (fd["away"] == away)) | ((fd["home"] == away) & (fd["away"] == home))]
+        if ((pair["date"] - day).abs() <= pd.Timedelta(days=3)).any():
+            continue
+        if ((fd["home"] == home) & (fd["away"] == away)).any():  # this season's fixture, on another date
+            continue
+        rows.append({"date": day, "league": league, "season": season, "home": home, "away": away,
+                     "referee": None, "hg": float(d["goals"]["h"]), "ag": float(d["goals"]["a"]),
+                     "xg_h": float(d["xG"]["h"]), "xg_a": float(d["xG"]["a"])})
+    return pd.DataFrame(rows)
+
+
+def add_recent_results(matches: pd.DataFrame) -> pd.DataFrame:
+    """Append this season's results Understat has but football-data hasn't added
+    yet, so form and ratings include the latest round. Goals and xG only."""
+    season = current_season()
+    extra = []
+    for league, grp in matches[matches["season"] == season].groupby("league"):
+        if league not in UNDERSTAT_LEAGUES:
+            continue
+        try:
+            extra.append(missing_results(grp, _understat_league_json(league, season)["dates"], league, season))
+        except Exception:
+            continue
+    extra = [e for e in extra if not e.empty]
+    if not extra:
+        return matches
+    out = pd.concat([matches, *extra], ignore_index=True)
+    return out.sort_values(["date", "league", "home"]).reset_index(drop=True)
 
 
 def load_players(league: str, season: int, fd_teams: list[str], cache_dir: Path = DEFAULT_CACHE) -> pd.DataFrame:

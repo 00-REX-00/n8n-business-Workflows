@@ -1,13 +1,14 @@
-"""Command line: python -m predictor {predict,backtest,ratings} ..."""
+"""Command line: python -m predictor {predict,upcoming,review,backtest,ratings} ..."""
 from __future__ import annotations
 
 import argparse
 import math
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
-from . import backtest, calibration, data, predict
+from . import backtest, calibration, data, fixtures, predict, review
 from .model import LeagueModel
 
 
@@ -19,6 +20,16 @@ def main() -> None:
     p.add_argument("fixtures", type=Path)
     p.add_argument("--out", type=Path, default=Path("output/predictions.csv"))
     p.add_argument("--bankroll", type=float, help="your total betting bankroll, to print stake amounts")
+
+    u = sub.add_parser("upcoming", help="fetch the next days' fixtures online and predict them")
+    u.add_argument("--leagues", nargs="+", default=data.TOP5, choices=sorted(data.LEAGUES))
+    u.add_argument("--days", type=int, default=3, help="1 = today only")
+    u.add_argument("--out", type=Path, default=Path("output/upcoming.csv"))
+    u.add_argument("--bankroll", type=float, help="your total betting bankroll, to print stake amounts")
+
+    v = sub.add_parser("review", help="grade a day's picks against the final scores")
+    v.add_argument("--date", type=date.fromisoformat, default=date.today(), help="YYYY-MM-DD, default today")
+    v.add_argument("--leagues", nargs="+", default=data.TOP5, choices=sorted(data.LEAGUES))
 
     b = sub.add_parser("backtest", help="walk-forward test on past seasons")
     b.add_argument("--leagues", nargs="+", default=data.TOP5)
@@ -37,6 +48,28 @@ def main() -> None:
 
     if args.cmd == "predict":
         predict.run(predict.read_fixtures(args.fixtures), args.out, args.bankroll)
+
+    elif args.cmd == "upcoming":
+        now = data.current_season()
+        matches = data.load_matches(args.leagues, list(range(now - 3, now + 1)))
+        fx, notes = fixtures.upcoming(args.leagues, args.days, fixtures.known_teams(matches))
+        for note in notes:
+            print(f"note: {note}")
+        if fx.empty:
+            print(f"No fixtures found in the next {args.days} day(s).")
+        else:
+            predict.run(predict.normalise_fixtures(fx), args.out, args.bankroll, matches)
+
+    elif args.cmd == "review":
+        match_table, pick_table, s, pending = review.review(args.leagues, args.date)
+        print(f"{args.date:%A %d %B %Y}: {s['finished']} finished, {len(pending)} not finished yet")
+        if not match_table.empty:
+            print(match_table.drop(columns=["Kick-off", "Model Brier", "Bookmaker Brier"]).to_string(index=False))
+            print()
+            print(pick_table.to_string(index=False))
+            print()
+            for key, val in s.items():
+                print(f"{key}: {val}")
 
     elif args.cmd == "backtest":
         first = min(args.seasons)

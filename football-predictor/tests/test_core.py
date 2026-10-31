@@ -79,6 +79,7 @@ class TeamsTest(unittest.TestCase):
         self.assertEqual(teams.resolve("Nottingham Forest", known), "Nott'm Forest")
         self.assertEqual(teams.resolve("Atlético Madrid", known), "Ath Madrid")
         self.assertEqual(teams.resolve("Inter Milan", known), "Inter")
+        self.assertEqual(teams.resolve("Racing Santander", ["Santander", "Valencia"]), "Santander")
         with self.assertRaises(KeyError):
             teams.resolve("Sporting Lisbon", known)
 
@@ -234,3 +235,258 @@ class NewsSafetyTest(unittest.TestCase):
         kept, skipped = safety.screen([bet], doubt, sh, sh)
         self.assertEqual(kept, [])
         self.assertIn("Haaland", skipped[0][1])
+
+    def test_bettable_odds_matches_the_rules(self):
+        from predictor import safety
+        self.assertEqual(safety.bettable_odds("1", 0.5), (2.10, 2.30))
+        lo, hi = safety.bettable_odds("over_2.5", 0.6)
+        self.assertEqual(len(value.find_value({"over_2.5": 0.6}, {"over_2.5": lo})), 1)
+        self.assertEqual(value.find_value({"over_2.5": 0.6}, {"over_2.5": lo - 0.01}), [])
+        self.assertLessEqual(0.6 * hi - 1, safety.MAX_EDGE)
+        self.assertEqual(safety.bettable_odds("1", 0.27), (3.89, 4.0))  # capped at MAX_ODDS
+        self.assertIsNone(safety.bettable_odds("btts_yes", 0.6))       # no proven skill
+        self.assertIsNone(safety.bettable_odds("2", 0.2))              # long shot
+
+
+class FixturesTest(unittest.TestCase):
+    def test_parse_football_data(self):
+        from predictor import fixtures
+        raw = pd.DataFrame({"Div": ["E0", "SP1"], "Date": ["31/10/2026", "01/11/2026"], "Time": ["12:30", "20:00"],
+                            "HomeTeam": ["Chelsea", "Betis"], "AwayTeam": ["Man United", "Malaga"],
+                            "Referee": ["P Bankes", None], "AvgH": [1.81, None], "B365H": [1.83, 1.5],
+                            "Avg>2.5": [1.55, 1.7]})
+        fx = fixtures.parse_football_data(raw)
+        self.assertEqual(fx["kickoff"][0], pd.Timestamp("2026-10-31 12:30"))
+        self.assertEqual(fx["odds:1"].tolist(), [1.81, 1.5])  # market average, else Bet365
+        self.assertTrue(pd.isna(fx["referee"][1]))
+        self.assertTrue(fx["odds:X"].isna().all())
+
+    def test_parse_understat_skips_played_and_renames(self):
+        from predictor import fixtures
+        dates = [{"isResult": True, "h": {"title": "Arsenal"}, "a": {"title": "Chelsea"},
+                  "datetime": "2026-10-20 15:00:00"},
+                 {"isResult": False, "h": {"title": "Manchester United"}, "a": {"title": "Arsenal"},
+                  "datetime": "2026-11-07 17:30:00"},
+                 {"isResult": False, "h": {"title": "Unknown FC"}, "a": {"title": "Arsenal"},
+                  "datetime": "2026-11-08 17:30:00"}]
+        fx = fixtures.parse_understat(dates, "E0", ["Arsenal", "Chelsea", "Man United"])
+        self.assertEqual(fx[["home", "away"]].values.tolist(), [["Man United", "Arsenal"]])
+
+    def test_select_window_timezone_and_duplicates(self):
+        from datetime import timedelta, timezone
+        from predictor import fixtures
+        fx = pd.DataFrame({
+            "league": ["E0", "E0", "E0", "E0", "E0"],
+            "kickoff": pd.to_datetime(["2026-10-31 11:00", "2026-10-31 15:00", "2026-10-31 15:00",
+                                       "2026-11-02 20:00", "2026-11-03 20:00"]),
+            "home": ["A", "C", "C", "E", "G"], "away": ["B", "D", "D", "F", "H"],
+            "referee": [None, "Ref", None, None, None], "source": ["fd", "fd", "understat", "fd", "fd"]})
+        wat = timezone(timedelta(hours=1))  # UK is on GMT after 25 Oct 2026, so local = UK + 1h
+        out = fixtures.select(fx, pd.Timestamp("2026-10-31 13:00"), 3, tz=wat)
+        # 11:00 UK (12:00 local) already started; 3 Nov is outside a 3-day window; C v D listed once
+        self.assertEqual(out["home"].tolist(), ["C", "E"])
+        self.assertEqual(out["kickoff"][0], pd.Timestamp("2026-10-31 16:00"))
+        self.assertEqual(out["referee"][0], "Ref")
+        self.assertEqual(out["date"][1], pd.Timestamp("2026-11-02"))
+
+    def test_missing_results_only_adds_what_football_data_lacks(self):
+        from predictor import xg
+        fd = pd.DataFrame({"date": pd.to_datetime(["2026-10-25", "2026-10-26", "2026-09-01"]),
+                           "home": ["Rennes", "Lille", "Nice"], "away": ["Paris SG", "Lens", "Rennes"],
+                           "hg": [2, 1, 0], "ag": [2, 0, 1]})
+
+        def game(day, h, a, hg=1, ag=0):
+            return {"isResult": True, "datetime": f"{day} 20:00:00", "h": {"title": h}, "a": {"title": a},
+                    "goals": {"h": str(hg), "a": str(ag)}, "xG": {"h": "1.1", "a": "0.4"}}
+        dates = [game("2026-10-25", "Paris Saint Germain", "Rennes"),   # listed the other way round: skip
+                 game("2026-10-30", "Le Havre", "Paris Saint Germain", 1, 5),  # new: add
+                 game("2026-10-20", "Nice", "Rennes"),                   # fixture already played: skip
+                 game("2026-08-01", "Lille", "Le Havre"),               # older than the window: skip
+                 {"isResult": False, "datetime": "2026-11-01 20:00:00", "h": {"title": "Lens"},
+                  "a": {"title": "Lille"}, "goals": {"h": None, "a": None}, "xG": {"h": None, "a": None}}]
+        fd_known = pd.concat([fd, pd.DataFrame({"date": [pd.Timestamp("2026-08-10")], "home": ["Le Havre"],
+                                                "away": ["Lens"], "hg": [0], "ag": [0]})])
+        out = xg.missing_results(fd_known, dates, "F1", 2026)
+        self.assertEqual(out[["home", "away", "hg", "ag"]].values.tolist(), [["Le Havre", "Paris SG", 1.0, 5.0]])
+        self.assertEqual(out["xg_h"][0], 1.1)
+
+    def test_normalise_fills_optional_columns(self):
+        from predictor import predict
+        fx = predict.normalise_fixtures(pd.DataFrame({"league": ["E0"], "home": ["A"], "away": ["B"]}))
+        self.assertEqual((fx["home_adj"][0], fx["away_adj"][0]), (1.0, 1.0))
+        self.assertIsNone(fx["home_missing"][0])
+
+
+class HistoryTest(unittest.TestCase):
+    def matches(self):
+        return pd.DataFrame({
+            "league": ["SP2", "SP2", "SP1", "SP1", "SP1"], "season": [2023, 2023, 2025, 2025, 2026],
+            "date": pd.to_datetime(["2023-10-01", "2024-03-01", "2025-11-08", "2026-01-31", "2026-10-25"]),
+            "home": ["Levante", "Ath Madrid", "Ath Madrid", "Levante", "Levante"],
+            "away": ["Ath Madrid", "Levante", "Levante", "Ath Madrid", "Betis"],
+            "hg": [2, 1, 3, 0, 1], "ag": [1, 1, 1, 0, 2]})
+
+    def test_head_to_head_newest_first_across_divisions(self):
+        from predictor import history
+        h = history.head_to_head(self.matches(), "Levante", "Ath Madrid", pd.Timestamp("2026-10-31"))
+        self.assertEqual(h["Match"].tolist(), ["Levante 0-0 Ath Madrid", "Ath Madrid 3-1 Levante",
+                                               "Ath Madrid 1-1 Levante", "Levante 2-1 Ath Madrid"])
+        self.assertEqual(h["Competition"].tolist()[-1], "La Liga 2")
+        self.assertEqual(history.record(h, "Levante", "Ath Madrid"), "Levante 1 wins · 2 draws · Ath Madrid 1 wins")
+
+    def test_form_from_the_teams_side_and_before_the_match(self):
+        from predictor import history
+        f = history.form(self.matches(), "Levante", pd.Timestamp("2026-10-25"), n=3)
+        self.assertEqual(f["Result"].tolist(), ["D", "L", "D"])   # the 25 Oct match is excluded
+        self.assertEqual(f["Score"].tolist(), ["0-0", "1-3", "1-1"])
+        self.assertEqual(f[""].tolist(), ["H", "A", "A"])
+
+
+class ReviewTest(unittest.TestCase):
+    def test_parse_espn_and_grade(self):
+        from predictor import news, picks, review
+
+        def event(home, away, hs, as_, done):
+            return {"date": "2026-10-31T15:00Z", "status": {"type": {"completed": done, "description": "x"}},
+                    "competitions": [{"competitors": [
+                        {"homeAway": "home", "score": hs, "team": {"displayName": home, "shortDisplayName": home}},
+                        {"homeAway": "away", "score": as_, "team": {"displayName": away, "shortDisplayName": away}}]}]}
+        known = ["Hull", "Ipswich", "Man City", "Brighton"]
+        sc = review.parse_espn([event("Hull City", "Ipswich Town", "2", "2", True),
+                                event("Manchester City", "Brighton & Hove Albion", "0", "0", False)], "E0", known)
+        self.assertEqual(sc[["home", "away"]].values.tolist(), [["Hull", "Ipswich"], ["Man City", "Brighton"]])
+        self.assertTrue(sc["hg"].isna()[1])   # not finished: no score
+
+        probs = markets.goal_markets(ratings.score_matrix(1.6, 1.1, -0.05))
+        fn = news.FixtureNews(True, "FPL", news.TeamNews(), news.TeamNews())
+        res = [{"league": "E0", "home": "Hull", "away": "Ipswich", "pred": {"probs": probs},
+                "odds": {"1": 2.0, "X": 3.5, "2": 4.0}, "picks": picks.best_picks(probs), "withheld": None,
+                "bets": [value.Bet("X", 0.3, 3.5, 0.05, 0.01)], "skipped": [], "news": fn}]
+        m, p = review.grade(res, sc)
+        self.assertEqual(m["Score"].tolist(), ["2-2"])
+        self.assertFalse(m["Model right"][0])        # model said home win
+        bet = p[p["Kind"] == "Value bet"].iloc[0]
+        self.assertTrue(bet["Won"])                  # the draw came in
+        s = review.summary(m, p)
+        self.assertAlmostEqual(s["Value bet"]["profit_units"], 2.5)
+
+
+class SportyBetTest(unittest.TestCase):
+    def tournaments(self):
+        def market(mid, outcomes, spec=None, status=0):
+            m = {"id": mid, "status": status, "outcomes": [{"id": o, "odds": str(x), "isActive": 1}
+                                                           for o, x in outcomes]}
+            if spec:
+                m["specifier"] = spec
+            return m
+        return [{"events": [{"eventId": "sr:match:1", "homeTeamName": "Liverpool", "awayTeamName": "Arsenal",
+                             "estimateStartTime": 1793550600000,
+                             "markets": [market("1", [("1", 2.6), ("2", 3.5), ("3", 2.5)]),
+                                         market("10", [("9", 1.5), ("10", 1.3), ("11", 1.42)]),
+                                         market("18", [("12", 1.7), ("13", 2.1)], "total=2.5"),
+                                         market("18", [("12", 1.3), ("13", 3.4)], "total=2"),   # whole line: ignored
+                                         market("29", [("74", 1.6), ("76", 2.2)], status=2)]},  # suspended
+                            {"eventId": "sr:match:2", "homeTeamName": "Unknown FC", "awayTeamName": "Arsenal",
+                             "estimateStartTime": 1793550600000, "markets": []}]}]
+
+    def test_parse_events(self):
+        from predictor import sportybet
+        ev = sportybet.parse_events(self.tournaments(), "E0", ["Liverpool", "Arsenal"])
+        self.assertEqual(len(ev), 1)
+        r = ev.iloc[0]
+        self.assertEqual((r["event_id"], r["home"], r["away"]), ("sr:match:1", "Liverpool", "Arsenal"))
+        self.assertEqual((r["odds:1"], r["odds:X2"], r["odds:over_2.5"], r["odds:under_2.5"]), (2.6, 1.42, 1.7, 2.1))
+        self.assertNotIn("odds:btts_yes", ev.columns)
+
+    def test_merge_odds_and_selection(self):
+        from predictor import sportybet
+        ev = sportybet.parse_events(self.tournaments(), "E0", ["Liverpool", "Arsenal"])
+        fx = pd.DataFrame({"league": ["E0", "E0"], "home": ["Liverpool", "Chelsea"], "away": ["Arsenal", "Fulham"],
+                           "odds:1": [2.33, 1.9], "odds:under_2.5": [2.0, 2.2]})
+        out = sportybet.merge_odds(fx, ev)
+        self.assertEqual(out["odds_source"].tolist(), ["SportyBet", "Bookmaker average"])
+        self.assertEqual(out["odds:1"].tolist(), [2.6, 1.9])
+        self.assertEqual(out["odds:X2"][0], 1.42)
+        self.assertTrue(pd.isna(out["odds:X2"][1]))
+        self.assertEqual(out["event_id"][0], "sr:match:1")
+        self.assertEqual(sportybet.selection("sr:match:1", "X2"),
+                         {"eventId": "sr:match:1", "marketId": "10", "specifier": None, "outcomeId": "11"})
+        self.assertEqual(sportybet.selection("sr:match:1", "home_over_0.5")["specifier"], "total=0.5")
+
+
+class AccaTest(unittest.TestCase):
+    @staticmethod
+    def leg(match, market, odds, q, p=None):
+        from predictor import acca
+        home, away = match.split("-")
+        return acca.Leg({"home": home, "away": away, "fx": {"kickoff": pd.Timestamp("2026-11-01")}},
+                        market, odds, q, p or q)
+
+    def test_build_matches_brute_force(self):
+        import itertools
+        import math
+        from predictor import acca
+        rng = np.random.default_rng(3)
+        legs = []
+        for i in range(8):
+            for mk in ("1X", "over_1.5"):
+                o = float(rng.uniform(1.2, 1.9))
+                legs.append(self.leg(f"H{i}-A{i}", mk, round(o, 2), min(0.95, 1 / o / float(rng.uniform(1.0, 1.08)))))
+        target = 6.0
+        got = acca.build(legs, target)
+        best, best_p = None, -1.0
+        by_match = {}
+        for leg in legs:
+            by_match.setdefault(leg.match, []).append(leg)
+        options = [[None] + g for g in by_match.values()]
+        for combo in itertools.product(*options):
+            chosen = [c for c in combo if c is not None]
+            odds = math.prod(c.odds for c in chosen)
+            if chosen and target <= odds <= target * acca.OVERSHOOT:
+                p = math.prod(c.book_prob for c in chosen)
+                if p > best_p:
+                    best, best_p = chosen, p
+        self.assertAlmostEqual(acca.summary(got)["chance"], best_p, places=3)
+        self.assertEqual(len({leg.match for leg in got}), len(got))   # one leg per match
+
+    def test_build_prefers_fewer_fairer_legs_and_reports_impossible(self):
+        from predictor import acca
+        short = [self.leg(f"S{i}-T{i}", "1X", 1.25, 0.76) for i in range(12)]    # 5% margin each
+        long_ = [self.leg(f"L{i}-M{i}", "1", 3.2, 0.30) for i in range(2)]       # 4% margin each
+        got = acca.build(short + long_, 10.0)
+        self.assertEqual(sorted(leg.odds for leg in got), [3.2, 3.2])
+        self.assertEqual(acca.build(short[:3], 10.0), [])
+
+    def test_alternatives_and_by_league(self):
+        from predictor import acca
+        legs = [self.leg(f"H{i}-A{i}", "1", 1.4 + 0.02 * i, 0.69 - 0.005 * i) for i in range(20)]
+        for leg, league in zip(legs, ["I1"] * 14 + ["SP1"] * 2 + ["E0"] * 4):   # E0 gets the 1.72-1.78 legs
+            leg.result["league"] = league
+        alts = acca.alternatives(legs, 10.0)
+        self.assertEqual(len(alts), 3)
+        self.assertEqual([l.match for l in alts[0]], [l.match for l in acca.build(legs, 10.0)])
+        matches = [l.match for t in alts for l in t]
+        self.assertEqual(len(matches), len(set(matches)))                   # no match reused
+        chances = [acca.summary(t)["chance"] for t in alts]
+        self.assertEqual(chances, sorted(chances, reverse=True))            # best first
+        per = acca.by_league(legs, 3.0)
+        self.assertEqual(set(per), {"E0", "I1"})                            # SP1's 2 legs can't reach 3 odds
+        self.assertTrue(all(l.result["league"] == lg for lg, t in per.items() for l in t))
+
+    def test_implied_probs(self):
+        from predictor import sportybet
+        q = sportybet.implied_probs({"1": 2.0, "X": 3.5, "2": 4.0, "home_over_0.5": 1.25, "home_under_0.5": 4.0})
+        self.assertAlmostEqual(q["1"] + q["X"] + q["2"], 1.0)
+        self.assertAlmostEqual(q["1X"], q["1"] + q["X"])
+        self.assertAlmostEqual(q["home_over_0.5"] + q["home_under_0.5"], 1.0)
+
+
+class PicksTest(unittest.TestCase):
+    def test_best_picks(self):
+        from predictor import picks
+        probs = {"1": 0.55, "X": 0.25, "2": 0.20, "1X": 0.80, "X2": 0.45, "over_1.5": 0.86,
+                 "over_2.5": 0.62, "under_2.5": 0.38, "btts_yes": 0.75, "home_over_0.5": 0.90}
+        got = picks.best_picks(probs)
+        self.assertEqual([p.market for p in got], ["1X", "over_2.5", "1"])  # >80% and BTTS left out
+        lo, hi = got[0].odds_range
+        self.assertGreaterEqual(0.80 * lo - 1, value.MIN_EDGE)
