@@ -1,5 +1,7 @@
 # n8n Business Workflows
 
+> Also in this repo: [`football-predictor/`](football-predictor/README.md), a football betting model (goals, cards and corners markets) with backtests and value-bet staking.
+
 ## Order-to-Fulfillment Pipeline (event-driven, fails loudly)
 
 A Stripe test-mode payment triggers the workflow. It verifies the payment, skips duplicates, checks and reserves stock, generates a PDF invoice, emails the customer and logs the order. **Every step either retries or alerts a human** with the order, the failed step, the reason and what to do.

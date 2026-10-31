@@ -1,0 +1,121 @@
+# Football Predictor
+
+A betting model for the top 5 European leagues (more leagues ready to switch on). It gives a probability for each market, compares it with your bookmaker's odds (e.g. SportyBet), and only flags a bet when the odds pay more than the model thinks the bet is worth. Stake sizes are capped.
+
+**Read "What the backtest says" before you stake money.**
+
+## What it models
+
+| Area | How |
+|---|---|
+| Team strength | Dixon-Coles ratings (attack and defence per team, home advantage), refitted on every prediction date. Recent games count more: a match a year ago weighs about a third as much as last week's |
+| Chance quality | Ratings learn 50/50 from goals and from shots on target (a free stand-in for expected goals, xG), which settles faster than goals alone |
+| Promoted teams | Start below league average instead of at average |
+| Goal markets | A full scoreline probability table gives 1X2, double chance, draw no bet, over/under 0.5 to 4.5, team goals, both teams to score (BTTS) and clean sheets |
+| Cards | Team card ratings × referee strictness (shrunk until the referee has enough games); spread modelled with a negative binomial |
+| Corners | Team corner ratings (experimental, see below) |
+| Lineups and injuries | You enter them as `home_adj` / `away_adj` multipliers on expected goals |
+| Form and head-to-head | Printed for you to read; **not** used in the probabilities (see below) |
+
+### Why head-to-head and "form" are shown but not used
+
+Five past meetings are five noisy games, often with different players and managers. Recent form is already inside the ratings, which weight recent games more and use every opponent rather than just one. Adding H2H on top double-counts noise. That's why the report prints them but the numbers ignore them. Lineups do matter a lot, which is what the `*_adj` columns are for.
+
+## What the backtest says
+
+Walk-forward test of 3,492 matches (2024-25 and 2025-26 seasons, top 5 leagues). The model was refitted every week using only matches played before that week, so it never saw a result before predicting it.
+
+| Market | Accuracy | Skill vs. always guessing the league average |
+|---|---|---|
+| 1X2 (backing the favourite) | 52.4% | good (on par with published models) |
+| Double chance 1X / X2 | 70% / 66% | **+10%**: the model's strongest area |
+| Home team over 0.5 / away team over 0.5 | 77% / 72% | +6% / +3% |
+| Over 1.5 / 2.5 / 3.5 | 77% / 57% / 69% | +1% (small) |
+| Cards over 3.5 / 4.5 | 60% / 60% | +1.5% |
+| BTTS | 55% | ~0, no skill |
+| Corners over 9.5 | 56% | below zero, no skill |
+
+The model never calls BTTS or corners a value bet (`NO_SKILL_PREFIXES` in `predictor/value.py`) until they're improved.
+
+**"Safe" picks:** when the model rated something ≥ 85% likely:
+
+| Pick | Picks | Actually won | Lowest odds that would have made a profit |
+|---|---|---|---|
+| Over 1.5 / under 1.5 | 393 | 85.5% | 1.17 |
+| Home team to score | 641 | 92.5% | 1.08 |
+| 1X double chance | 348 | 91.4% | 1.09 |
+
+The model is reliable here: when it says 90%, it wins about 90% of the time. But bookmakers price these near 1.05–1.15, so the odds usually leave no profit. **High hit rate is not the same as profit.** That's why the tool compares with real odds instead of picking "sure" games.
+
+**No profit test yet.** The data reachable in the build environment has no odds. On your machine, the data downloads straight from football-data.co.uk, which includes closing odds. Run the backtest there and it adds a "value bets at historical closing odds" table: the profit test that matters. Don't stake real money before you've seen that table.
+
+## Setup
+
+Requires Python 3.10+.
+
+```bash
+cd football-predictor
+```
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+python -m unittest discover -s tests
+```
+
+## Daily use
+
+1. **Fill in the fixtures file.** Copy `examples/fixtures_example.csv` (its odds are made up) and fill in the matches and the SportyBet odds you see:
+
+   | Column | Meaning |
+   |---|---|
+   | `league` | `E0` Premier League, `SP1` La Liga, `I1` Serie A, `D1` Bundesliga, `F1` Ligue 1 (others in `predictor/data.py`) |
+   | `date`, `home`, `away` | Team names as SportyBet writes them are usually recognised. Unknown names show the closest matches, and you add them to `predictor/teams.py` |
+   | `referee` | Optional. Improves the cards markets |
+   | `home_adj`, `away_adj` | Optional, default 1.0. Use ~0.85 when the main striker is out, ~0.90 for heavy rotation, ~1.05 when a key player returns |
+   | `odds:<market>` | Any of: `1 X 2 1X X2 12 dnb_1 dnb_2 over_1.5 under_1.5 over_2.5 under_2.5 over_3.5 under_3.5 home_over_0.5 away_over_0.5 home_over_1.5 away_over_1.5 btts_yes btts_no cards_over_3.5 cards_under_3.5 corners_over_9.5 …` |
+
+2. **Run the prediction** once lineups are out (about 1 hour before kickoff):
+
+   ```bash
+   python -m predictor predict my_fixtures.csv --bankroll 50000
+   ```
+
+   For each match you get expected goals, likely scores, form, H2H, the model's probability and fair odds for each market, and any **VALUE** bets with a stake. "No value at these odds: no bet" is the most common output, and the right one.
+
+3. **Log every bet** you place (date, market, odds, stake, result) and the odds at kickoff. After 200+ bets you'll know whether you have an edge. If your odds keep beating the kickoff odds, that's the best sign.
+
+Other commands:
+
+```bash
+python -m predictor ratings E0
+```
+
+```bash
+python -m predictor backtest --seasons 2024 2025
+```
+
+```bash
+python -m predictor backtest --leagues N1 P1 E1 --seasons 2024 2025
+```
+
+## Staking rules built in (`predictor/value.py`)
+
+- A bet needs ≥ 5% expected edge, model probability ≥ 25% and odds ≤ 4.0.
+- Stake = quarter Kelly, capped at **2% of bankroll per bet**.
+- A huge "edge" (say 15%+) on a big match usually means the model is missing news (an injury, a lineup change). Check before betting it.
+- **Avoid accumulators.** Each leg carries the bookmaker's margin, so a 5-leg acca multiplies it five times. If you build one anyway, use only legs that each show value (`value.accumulator` computes the true odds).
+
+## Being straight about money
+
+Even very good betting models make a few percent return over hundreds of bets, with losing weeks along the way. That's not "millions over a weekend". Staking big to chase that is the fastest way to lose a bankroll. Use only money you can afford to lose. If the profit test on your machine shows no edge, don't bet with this model yet.
+
+## Roadmap
+
+1. Run the backtest with odds on your machine (football-data.co.uk) to test whether it profits.
+2. Real xG from Understat for the top 5 leagues (better than shots on target).
+3. Lineups, injuries and suspensions from API-Football (paid) instead of manual `*_adj`.
+4. Test the second-wave leagues (Championship, Eredivisie, Portugal, Belgium, Scotland, Turkey, Greece). Bookmaker prices in smaller leagues are often less sharp.
+5. n8n workflow in this repo: fetch fixtures → run model → send value picks to Telegram.
