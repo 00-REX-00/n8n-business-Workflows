@@ -52,9 +52,12 @@ chmod 640 "$PASSWORDS"
 
 echo "== App service"
 install -m 644 "$APP/deploy/football-predictor.service" /etc/systemd/system/football-predictor.service
+install -m 644 "$APP/deploy/odds-snapshot.service" /etc/systemd/system/odds-snapshot.service
+install -m 644 "$APP/deploy/odds-snapshot.timer" /etc/systemd/system/odds-snapshot.timer
 systemctl daemon-reload
 systemctl enable football-predictor
 systemctl restart football-predictor
+systemctl enable --now odds-snapshot.timer   # SportyBet odds log, every 2 hours
 
 echo "== Web server"
 sed "s/__DOMAIN__/$DOMAIN/g" "$APP/deploy/nginx.conf" > /etc/nginx/sites-available/football-predictor

@@ -89,7 +89,37 @@ The model is reliable here: when it says 90%, it wins about 90% of the time. But
 | Top picks (one per match) | 2,158 | won 74.1%, model expected 75.6% |
 | Picks whose closing odds were inside "bet at" | 139 | +10.6% (too few to tell skill from luck) |
 
-Bookmakers' closing odds were also more accurate than the model on match results (log loss 0.973 vs 0.987). What it means: the model's probabilities are honest (picks win about as often as it says), but it does not beat the bookmakers, and betting its "value" signals lost money. Bigger edges lost more, so the gaps between model and market are mostly model error. Until that changes, treat the app as an analysis tool, stake small or not at all, and let the Bet tracker's closing-line value tell you whether you have an edge. Rerun: `python -m predictor backtest --seasons 2024 2025`.
+Bookmakers' closing odds were also more accurate than the model on match results (log loss 0.973 vs 0.987). What it means: the model's probabilities are honest (picks win about as often as it says), but it does not beat the bookmakers, and betting its "value" signals lost money. Bigger edges lost more, so the gaps between model and market are mostly model error. Until that changes, treat the app as an analysis tool, stake small or not at all, and let the Bet tracker's closing-line value tell you whether you have an edge. Rerun: `python -m predictor backtest --seasons 2024 2025`, then `python -m predictor profit output/backtest.csv --test-seasons 2025`.
+
+At Bet365's pre-match prices (closer to what a soft bookmaker like SportyBet offers when you bet) the same rules lost 7.9% over 1,019 bets, and those bets were on average 5% worse than the fair closing price.
+
+**Decision rule for every test below**, fixed before looking at results: thresholds and calibration are chosen on earlier seasons and judged only on later ones, and a strategy counts as promising only with at least 150 judged bets, ROI above zero by more than 2 standard errors and positive closing-line value.
+
+### Smaller leagues (November 2026)
+
+Smaller leagues get less attention from bookmakers, so they're the obvious place to look for soft prices. The same walk-forward test on 17 of them (the 11 smaller leagues in the app plus League One, League Two, the National League and the three Scottish divisions below the Premiership), calibration fitted on 2023-24 and 2024-25 and judged on 7,428 matches from 2025-26 and 2026-27:
+
+| | Result |
+|---|---|
+| 1X2 log loss, model vs closing odds | 1.028 vs 1.006: the odds were more accurate **in all 17 leagues** |
+| Value bets at closing odds | 3,278 bets, **−8.5%** (± 2.1) |
+| Value bets at Bet365 pre-match odds | 3,160 bets, **−6.7%** (± 2.2); 5–8% worse than the fair closing price in every league |
+| Leagues passing the decision rule | none |
+
+The bookmakers also protect themselves: the average margin on a 1X2 market is about 4.5–5% in the top 5 leagues but 7–9% in the Greek league, the National League and the lower Scottish divisions. Without xG or team news there, the model knows less than in the big leagues, not more. Rerun: `python -m predictor backtest --leagues E1 N1 P1 B1 T1 SC0 D2 I2 SP2 F2 G1 E2 E3 EC SC1 SC2 SC3 --seasons 2023 2024 2025 2026 --test-seasons 2025 2026`.
+
+### One bookmaker against the market (no model)
+
+Another route needs no model at all: when one bookmaker pays more than the market's fair price (the average odds across bookmakers, margin removed), the bet has an edge if the market is right. `python -m predictor consensus` replays this on 55,357 matches in 22 leagues (2019-20 to 2026-27, odds up to 4.0). Threshold chosen on 2019–2023, judged on 2024 onwards:
+
+| Rule | Judged bets | ROI | Closing-line value | Verdict |
+|---|---|---|---|---|
+| Bet365 ≥ 2% above the fair price | 29 | +20.9% (± 29.2) | +2.7% | too few bets: Bet365 is rarely out of line |
+| Best price anywhere ≥ 6% above the fair price | 106 | +24.6% (± 12.9) | +17.2%, beat the close 91% of the time | close, but not passing |
+
+The second row is the only real signal so far, and it matches published research (Kaunitz et al., 2017): prices far above the market's fair price do tend to win. But the best price across 40+ bookmakers is often a stale quote that no single bookmaker would honour, and bookmakers limit accounts that keep taking such prices. The useful question is whether **SportyBet** is ever that far out of line. That's what the [odds log](#odds-log) is collecting data for.
+
+The fair price uses the power method of removing the margin, which takes more margin off long shots than favourites. Plain normalising made long shots look likelier than they are and invented edges on them; it gives the same verdicts.
 
 ## Setup
 
@@ -207,7 +237,15 @@ python -m predictor backtest --seasons 2024 2025
 ```
 
 ```bash
-python -m predictor backtest --leagues N1 P1 E1 --seasons 2024 2025
+python -m predictor backtest --leagues N1 P1 E1 --seasons 2023 2024 2025 --test-seasons 2025
+```
+
+```bash
+python -m predictor consensus
+```
+
+```bash
+python -m predictor snapshot
 ```
 
 ## Play-safe rules (`predictor/safety.py`)
@@ -256,6 +294,12 @@ SportyBet has no public API: this reads the data its own website loads, so it ca
 
 Accumulators: the slip shows the combined odds, real win chance and edge. Prefer singles. If you do combine, keep to 2–3 legs that each have value, never two picks from the same match, and stake at most 1% of bankroll.
 
+## Odds log
+
+Nobody publishes SportyBet's past prices, so nothing about SportyBet itself can be backtested until we collect them. `python -m predictor snapshot` saves SportyBet's current odds for every listed match in the 16 leagues (all markets the app uses), plus football-data.co.uk's Bet365, average and best odds for the same fixtures, to monthly files in `data/odds_log/` (`sportybet_YYYY-MM.csv`, `footballdata_YYYY-MM.csv`; times in UTC).
+
+On the VPS a timer (`deploy/odds-snapshot.timer`) runs it every 2 hours from 07:05 to 23:05 Nigerian time: about 150 requests a day to SportyBet, and a price within about 2 hours of most kick-offs (`snapshot.closing` takes the last one before kick-off). After 4–6 weeks there's enough to test whether SportyBet's prices are ever far enough from the market's to bet on. Check it on the server with `systemctl list-timers odds-snapshot.timer` and `journalctl -u odds-snapshot`.
+
 ## Data sources
 
 | Data | Source | Notes |
@@ -273,7 +317,7 @@ All downloads are cached in `data/raw/`.
 
 ## Roadmap
 
-1. Run the backtest with odds on your machine (football-data.co.uk) to test whether it profits, then refit the calibration with xG for all 5 leagues: `python -m predictor backtest --seasons 2023 2024 2025 --save-calibration`.
-2. Confirmed lineups (released ~1 hour before kickoff) from API-Football, on top of the injury list.
-3. Test the second-wave leagues (Championship, Eredivisie, Portugal, Belgium, Scotland, Turkey, Greece). Bookmaker prices in smaller leagues are often less sharp.
+1. ~~Profit backtest with odds~~ (done: no edge in the top 5) and ~~smaller leagues~~ (done: no edge in 17 of them). See [What the backtest says](#what-the-backtest-says).
+2. After 4–6 weeks of the [odds log](#odds-log): test SportyBet's own prices against the market's fair price, and the model at SportyBet's real prices.
+3. Confirmed lineups (released ~1 hour before kickoff) from API-Football, on top of the injury list.
 4. n8n workflow in this repo: fetch fixtures → run model → send value picks to Telegram.

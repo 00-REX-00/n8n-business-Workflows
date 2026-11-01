@@ -1,0 +1,13 @@
+[Unit]
+Description=Football Predictor: save SportyBet's and the market's current odds (data/odds_log/)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=predictor
+WorkingDirectory=/opt/predictor/football-predictor
+Environment=TZ=Africa/Lagos
+ExecStart=/opt/predictor/venv/bin/python -m predictor snapshot
+TimeoutStartSec=15min
+Nice=10

@@ -413,6 +413,14 @@ class SportyBetTest(unittest.TestCase):
                          {"eventId": "sr:match:1", "marketId": "10", "specifier": None, "outcomeId": "11"})
         self.assertEqual(sportybet.selection("sr:match:1", "home_over_0.5")["specifier"], "total=0.5")
 
+    def test_parse_events_keep_unknown(self):
+        from predictor import sportybet
+        ev = sportybet.parse_events(self.tournaments(), "E0", ["Liverpool", "Arsenal"], keep_unknown=True)
+        self.assertEqual(len(ev), 2)
+        self.assertEqual(ev["sb_home"].tolist(), ["Liverpool", "Unknown FC"])
+        self.assertTrue(pd.isna(ev["home"][1]))
+        self.assertEqual(ev["away"][1], "Arsenal")
+
 
 class AccaTest(unittest.TestCase):
     @staticmethod
@@ -490,3 +498,100 @@ class PicksTest(unittest.TestCase):
         self.assertEqual([p.market for p in got], ["1X", "over_2.5", "1"])  # >80% and BTTS left out
         lo, hi = got[0].odds_range
         self.assertGreaterEqual(0.80 * lo - 1, value.MIN_EDGE)
+
+
+class ConsensusTest(unittest.TestCase):
+    @staticmethod
+    def match():
+        odds = {"B365": (2.2, 3.4, 3.5, 1.9, 1.95), "Avg": (2.0, 3.3, 3.8, 1.85, 1.95),
+                "AvgC": (2.1, 3.3, 3.6, 1.9, 1.9)}
+        from predictor import consensus
+        row = {"date": pd.Timestamp("2025-09-01"), "league": "E0", "season": 2025, "home": "A", "away": "B",
+               "hg": 2, "ag": 1}
+        for source in consensus.SOURCES:
+            for m, o in zip(consensus.MARKETS, odds.get(source, [np.nan] * 5)):
+                row[f"{source}:{m}"] = o
+        return pd.DataFrame([row])
+
+    def test_fair_removes_margin(self):
+        from predictor import consensus
+        df = self.match()
+        plain = consensus.fair(df, "Avg", "proportional").iloc[0]
+        power = consensus.fair(df, "Avg", "power").iloc[0]
+        book = value.market_probs({"1": 2.0, "X": 3.3, "2": 3.8})
+        self.assertAlmostEqual(plain["1"], book["1"])
+        for p in (plain, power):
+            self.assertAlmostEqual(p["1"] + p["X"] + p["2"], 1.0)
+            self.assertAlmostEqual(p["over_2.5"] + p["under_2.5"], 1.0)
+        # the power method takes more margin off the long shot than the favourite
+        self.assertGreater(power["1"], plain["1"])
+        self.assertLess(power["2"], plain["2"])
+        self.assertTrue(consensus.fair(df, "PSC").isna().all().all())
+
+    def test_edges(self):
+        from predictor import consensus
+        rows = consensus.edges(self.match(), "B365", "Avg").set_index("market")
+        p_ref = consensus.fair(self.match(), "Avg").iloc[0]
+        p_close = consensus.fair(self.match(), "AvgC").iloc[0]   # no Pinnacle closing: falls back to average
+        self.assertAlmostEqual(rows.loc["1", "edge"], 2.2 * p_ref["1"] - 1)
+        self.assertAlmostEqual(rows.loc["1", "clv"], 2.2 * p_close["1"] - 1)
+        self.assertEqual((rows.loc["1", "won"], rows.loc["X", "won"], rows.loc["over_2.5", "won"]), (1.0, 0.0, 1.0))
+        self.assertAlmostEqual(rows.loc["1", "profit"], 1.2)
+        self.assertEqual(rows.loc["under_2.5", "profit"], -1.0)
+
+    def test_decision_rule(self):
+        from predictor import consensus
+        steady = pd.DataFrame({"won": [1, 1, 1, 0] * 50, "price": 1.8, "profit": [0.8, 0.8, 0.8, -1.0] * 50,
+                               "clv": 0.02})
+        self.assertTrue(consensus.promising(consensus.stats(steady)))
+        self.assertFalse(consensus.promising(consensus.stats(steady.head(100))))   # too few bets
+        self.assertFalse(consensus.promising(consensus.stats(steady.assign(clv=-0.01))))
+
+
+class ProfitTestTest(unittest.TestCase):
+    def test_rules_sources_and_clv(self):
+        from predictor import backtest
+        rows = []
+        for (d, season, home, p1, o1) in ((pd.Timestamp("2023-09-01"), 2023, "A", 0.6, 1.9),
+                                          (pd.Timestamp("2025-09-01"), 2025, "A", 0.6, 1.9),   # edge 14%: bet
+                                          (pd.Timestamp("2025-09-02"), 2025, "C", 0.6, 2.0)):  # 20%: capped
+            for market, p, o, won in (("1", p1, o1, 1.0), ("X", 0.25, 4.0, 0.0), ("2", 0.15, 7.0, 0.0)):
+                rows.append({"date": d, "league": "E0", "season": season, "home": home, "away": "B",
+                             "market": market, "prob": p, "won": won, "odds": o})
+        res = pd.DataFrame(rows)
+        extra = pd.DataFrame([{"date": pd.Timestamp("2025-09-01"), "league": "E0", "home": "A", "away": "B",
+                               "B365:1": 1.8, "B365:X": 3.5, "B365:2": 6.0,
+                               "B365:over_2.5": np.nan, "B365:under_2.5": np.nan}])
+        bets, ll = backtest.profit_test(res, [2025], extra)
+        closing = bets[bets["source"] == "closing"]
+        self.assertEqual(closing[["home", "market"]].values.tolist(), [["A", "1"]])
+        self.assertAlmostEqual(closing["profit"].iloc[0], 0.9)
+        b365 = bets[bets["source"] == "bet365"].iloc[0]
+        fair = value.market_probs({"1": 1.9, "X": 4.0, "2": 7.0})
+        self.assertAlmostEqual(b365["clv"], 1.8 * fair["1"] - 1)
+        self.assertEqual(len(ll), 2)
+
+
+class SnapshotTest(unittest.TestCase):
+    def test_append_keeps_one_header_and_column_order(self):
+        import tempfile
+        from pathlib import Path
+        from predictor import snapshot
+        with tempfile.TemporaryDirectory() as tmp:
+            first = pd.DataFrame([{"odds:1": 2.0, "taken_at": pd.Timestamp("2026-11-01 08:00"), "event_id": "e1"}])
+            second = pd.DataFrame([{"event_id": "e1", "taken_at": pd.Timestamp("2026-11-01 10:00"), "odds:X": 3.1}])
+            p1 = snapshot.append(first, "sportybet", snapshot.SB_COLUMNS, Path(tmp))
+            p2 = snapshot.append(second, "sportybet", snapshot.SB_COLUMNS, Path(tmp))
+            self.assertEqual(p1, p2)
+            self.assertEqual(p1.name, "sportybet_2026-11.csv")
+            back = snapshot.load_log("sportybet", Path(tmp))
+            self.assertEqual(list(back.columns), snapshot.SB_COLUMNS)
+            self.assertEqual(back["odds:1"].tolist()[0], 2.0)
+            self.assertEqual(back["odds:X"].tolist()[1], 3.1)
+
+    def test_closing_is_last_snapshot_before_kickoff(self):
+        from predictor import snapshot
+        log = pd.DataFrame({"event_id": ["e1"] * 3, "kickoff": pd.Timestamp("2026-11-01 15:00"),
+                            "taken_at": pd.to_datetime(["2026-11-01 09:00", "2026-11-01 13:00",
+                                                        "2026-11-01 16:00"]), "odds:1": [2.0, 1.9, 1.5]})
+        self.assertEqual(snapshot.closing(log)["odds:1"].tolist(), [1.9])

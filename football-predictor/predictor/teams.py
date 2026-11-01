@@ -64,6 +64,7 @@ ALIASES = {
     "heart of midlothian fc": "Hearts", "heart of midlothian": "Hearts", "1 fc nuremberg": "Nurnberg",
     "1. fc nurnberg": "Nurnberg", "nuremberg": "Nurnberg", "rc celta fortuna": "Celta B",
     "celta fortuna": "Celta B", "panaitolikos agrinio": "Panetolikos", "panaitolikos": "Panetolikos",
+    "stade lavallois mfc": "Laval", "stade lavallois": "Laval",
 }
 GENERIC_WORDS = {"fc", "afc", "cf", "sc", "ac", "as", "ssc", "calcio", "club"}
 

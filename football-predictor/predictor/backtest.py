@@ -114,6 +114,60 @@ def calibration(res: pd.DataFrame, market: str, bins: int = 10) -> pd.DataFrame:
         matches=("won", "size"), predicted=("prob", "mean"), actual=("won", "mean"))
 
 
+def profit_test(res: pd.DataFrame, test_seasons: list[int],
+                extra_odds: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Out-of-sample replay of the app's betting rules: (bets, 1X2 log loss per match).
+
+    Calibration is fitted on the backtest's other seasons and applied to
+    `test_seasons`, which it never saw. Bets follow value.find_value plus the
+    play-safe edge cap (rule 3; the team-news rules can't be replayed), at
+    football-data's closing odds ("closing", Pinnacle first). With
+    `extra_odds` (from consensus.load) the rules are replayed a second time at
+    Bet365's pre-match prices ("bet365"): closer to what a soft bookmaker
+    offers when you actually bet.
+    """
+    from . import calibration, consensus, safety
+
+    params = calibration.fit(res[~res["season"].isin(test_seasons)])
+    pre = {}
+    if extra_odds is not None:
+        keys = zip(extra_odds["date"], extra_odds["league"], extra_odds["home"], extra_odds["away"])
+        prices = extra_odds[[f"B365:{m}" for m in consensus.MARKETS]].to_numpy()
+        pre = {k: {m: p for m, p in zip(consensus.MARKETS, row) if p == p and p > 1}
+               for k, row in zip(keys, prices)}
+
+    bets, ll = [], []
+    test = res[res["season"].isin(test_seasons)]
+    for (d, league, season, h, a), g in test.groupby(["date", "league", "season", "home", "away"]):
+        raw = dict(zip(g["market"], g["prob"]))
+        won = dict(zip(g["market"], g["won"]))
+        cal = calibration.apply(raw, params)
+        books = {"closing": {k: v for k, v in zip(g["market"], g["odds"]) if pd.notna(v)}}
+        if (d, league, h, a) in pre:
+            books["bet365"] = pre[(d, league, h, a)]
+        fair_close = value.market_probs(books["closing"])
+        for source, odds in books.items():
+            for b in value.find_value(cal, odds):
+                if b.edge > safety.MAX_EDGE:
+                    continue
+                # closing-line value: only meaningful for a price taken before the close
+                clv = b.odds * fair_close[b.market] - 1 if source != "closing" and b.market in fair_close \
+                    else np.nan
+                bets.append({"source": source, "date": d, "league": league, "season": season, "home": h,
+                             "away": a, "market": b.market, "prob": b.prob, "price": b.odds, "edge": b.edge,
+                             "won": won[b.market], "clv": clv})
+        if all(k in fair_close for k in ("1", "X", "2")):
+            y = [won["1"], won["X"], won["2"]]
+            ll.append({"league": league, "season": season,
+                       "model": -sum(w * np.log(max(cal[k], 1e-6)) for k, w in zip(("1", "X", "2"), y)),
+                       "closing_odds": -sum(w * np.log(max(fair_close[k], 1e-6))
+                                            for k, w in zip(("1", "X", "2"), y))})
+    bets = pd.DataFrame(bets, columns=["source", "date", "league", "season", "home", "away", "market",
+                                       "prob", "price", "edge", "won", "clv"])
+    bets["profit"] = np.where(bets["won"] == 1, bets["price"] - 1, -1.0)
+    return bets, pd.DataFrame(ll, columns=["league", "season", "model", "closing_odds"])
+
+
 def betting(res: pd.DataFrame, min_edge: float = value.MIN_EDGE) -> pd.DataFrame | None:
     """Flat-stake results of betting every value pick at the historical odds."""
     r = res.dropna(subset=["odds"])

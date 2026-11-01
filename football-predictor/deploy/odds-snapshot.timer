@@ -1,0 +1,9 @@
+[Unit]
+Description=Save SportyBet odds every 2 hours, 07:05 to 23:05 Nigerian time
+
+[Timer]
+OnCalendar=*-*-* 07,09,11,13,15,17,19,21,23:05:00 Africa/Lagos
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

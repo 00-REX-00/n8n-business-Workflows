@@ -64,18 +64,27 @@ def _call(path: str, body: dict | None = None, **params) -> dict:
     return payload.get("data") or {}
 
 
-def parse_events(tournaments: list[dict], league: str, known: list[str]) -> pd.DataFrame:
-    """One row per event: SportyBet event id, kick-off (local), our team names, odds:<market>."""
+def _resolve(name: str, known: list[str]) -> str | None:
+    try:
+        return teams.resolve(name, known)
+    except KeyError:
+        return None
+
+
+def parse_events(tournaments: list[dict], league: str, known: list[str],
+                 keep_unknown: bool = False) -> pd.DataFrame:
+    """One row per event: SportyBet event id, kick-off (local), our team names,
+    SportyBet's own names (sb_home, sb_away), odds:<market>. Events whose names
+    we can't place are skipped, or kept with home/away None if `keep_unknown`."""
     local = datetime.now().astimezone().tzinfo
     rows = []
     for t in tournaments:
         for e in t.get("events", []):
-            try:
-                home = teams.resolve(e["homeTeamName"], known)
-                away = teams.resolve(e["awayTeamName"], known)
-            except KeyError:
+            home, away = _resolve(e["homeTeamName"], known), _resolve(e["awayTeamName"], known)
+            if (home is None or away is None) and not keep_unknown:
                 continue
             row = {"league": league, "event_id": e["eventId"], "home": home, "away": away,
+                   "sb_home": e["homeTeamName"], "sb_away": e["awayTeamName"],
                    "kickoff": pd.Timestamp(e["estimateStartTime"], unit="ms", tz="UTC")
                                 .tz_convert(local).tz_localize(None)}
             for m in e.get("markets", []):
@@ -89,7 +98,7 @@ def parse_events(tournaments: list[dict], league: str, known: list[str]) -> pd.D
     return pd.DataFrame(rows)
 
 
-def events(league: str, known: list[str]) -> pd.DataFrame:
+def events(league: str, known: list[str], keep_unknown: bool = False) -> pd.DataFrame:
     """Upcoming SportyBet events (with odds) for one league."""
     if league not in TOURNAMENTS:
         return pd.DataFrame()
@@ -98,7 +107,7 @@ def events(league: str, known: list[str]) -> pd.DataFrame:
     while True:
         data = _call("factsCenter/pcUpcomingEvents", sportId="sr:sport:1", marketId=market_ids, pageSize=100,
                      pageNum=page, option=1, tournamentId=f"sr:tournament:{TOURNAMENTS[league]}")
-        frames.append(parse_events(data.get("tournaments", []), league, known))
+        frames.append(parse_events(data.get("tournaments", []), league, known, keep_unknown))
         if page * 100 >= data.get("totalNum", 0):
             break
         page += 1
