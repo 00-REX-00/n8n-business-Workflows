@@ -43,6 +43,7 @@ _BY_ID = {v: k for k, v in MARKETS.items()}
 # pages by the requested size, so asking for more silently skips events.
 PAGE_SIZE = 10
 MAX_PAGES = 30
+_LEAGUE_BY_TOURNAMENT = {f"sr:tournament:{t}": league for league, t in TOURNAMENTS.items()}
 
 
 def implied_probs(odds: dict[str, float]) -> dict[str, float]:
@@ -78,8 +79,11 @@ def _resolve(name: str, known: list[str]) -> str | None:
 def parse_events(tournaments: list[dict], league: str, known: list[str],
                  keep_unknown: bool = False) -> pd.DataFrame:
     """One row per event: SportyBet event id, kick-off (local), our team names,
-    SportyBet's own names (sb_home, sb_away), odds:<market>. Events whose names
-    we can't place are skipped, or kept with home/away None if `keep_unknown`."""
+    SportyBet's own names (sb_home, sb_away), odds:<market> and prob:<market>.
+    prob is SportyBet's own probability for the outcome, margin-free (each
+    market's sum to 1), so odds x prob is its own expected return per unit.
+    Events whose names we can't place are skipped, or kept with home/away None
+    if `keep_unknown`."""
     local = datetime.now().astimezone().tzinfo
     rows = []
     for t in tournaments:
@@ -98,6 +102,8 @@ def parse_events(tournaments: list[dict], league: str, known: list[str],
                     ours = _BY_ID.get((m["id"], m.get("specifier") or "", o["id"]))
                     if ours and o.get("isActive", 1) and o.get("odds"):
                         row[f"odds:{ours}"] = float(o["odds"])
+                        if o.get("probability"):
+                            row[f"prob:{ours}"] = float(o["probability"])
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -129,7 +135,7 @@ def merge_odds(fx: pd.DataFrame, sb: pd.DataFrame) -> pd.DataFrame:
     fx["event_id"] = None
     if sb.empty:
         return fx
-    odds_cols = [c for c in sb.columns if c.startswith("odds:")]
+    odds_cols = [c for c in sb.columns if c.startswith(("odds:", "prob:"))]
     for c in odds_cols:
         if c not in fx:
             fx[c] = float("nan")
@@ -139,7 +145,7 @@ def merge_odds(fx: pd.DataFrame, sb: pd.DataFrame) -> pd.DataFrame:
         if key not in keyed.index:
             continue
         s = keyed.loc[key]
-        for c in [c for c in fx.columns if c.startswith("odds:")]:
+        for c in [c for c in fx.columns if c.startswith(("odds:", "prob:"))]:
             fx.at[i, c] = float("nan")   # don't mix sources within one match
         for c in odds_cols:
             fx.at[i, c] = s[c]
@@ -169,6 +175,51 @@ def add_unlisted(fx: pd.DataFrame, sb: pd.DataFrame, start: pd.Timestamp, end: p
 def selection(event_id: str, market: str) -> dict:
     market_id, specifier, outcome_id = MARKETS[market]
     return {"eventId": event_id, "marketId": market_id, "specifier": specifier or None, "outcomeId": outcome_id}
+
+
+def raw_selection(leg: dict) -> dict:
+    """Booking selection for a leg read from a code, exactly as it was (any league or market)."""
+    return {"eventId": leg["event_id"], "marketId": leg["market_id"], "specifier": leg["specifier"] or None,
+            "outcomeId": leg["outcome_id"]}
+
+
+def parse_code(data: dict, known: dict[str, list[str]]) -> tuple[list[dict], int]:
+    """(one dict per leg, number of selections SportyBet says are no longer available)
+    from a booking code's data. `known` maps our league codes to team names."""
+    local = datetime.now().astimezone().tzinfo
+    legs = []
+    for e in data.get("outcomes", []):
+        tournament = e.get("sport", {}).get("category", {}).get("tournament", {})
+        league = _LEAGUE_BY_TOURNAMENT.get(tournament.get("id"))
+        names = known.get(league, []) if league else []
+        status = e.get("status", 0)
+        state = ("Not started" if status == 0 else
+                 f"Live {e.get('setScore', '')} ({e.get('playedSeconds', '')})" if status == 1 else
+                 f"Closed ({e.get('matchStatus', status)})")
+        for m in e.get("markets", []):
+            specifier = m.get("specifier") or ""
+            for o in m.get("outcomes", []):
+                legs.append({
+                    "event_id": e["eventId"], "league": league, "tournament": tournament.get("name", ""),
+                    "sb_home": e["homeTeamName"], "sb_away": e["awayTeamName"],
+                    "home": _resolve(e["homeTeamName"], names) if names else None,
+                    "away": _resolve(e["awayTeamName"], names) if names else None,
+                    "kickoff": pd.Timestamp(e["estimateStartTime"], unit="ms", tz="UTC")
+                                 .tz_convert(local).tz_localize(None),
+                    "started": status != 0, "state": state,
+                    "market_id": m["id"], "specifier": specifier, "outcome_id": o["id"],
+                    "market": _BY_ID.get((m["id"], specifier, o["id"])),
+                    "label": f"{m.get('desc', '')}: {o.get('desc', '')}",
+                    "odds": float(o["odds"]) if o.get("odds") else float("nan"),
+                    "prob": float(o["probability"]) if o.get("probability") else float("nan"),
+                    "active": bool(o.get("isActive", 1)) and m.get("status", 0) == 0,
+                })
+    return legs, len(data.get("unavailableOutcomes") or [])
+
+
+def load_code(code: str, known: dict[str, list[str]]) -> tuple[list[dict], int]:
+    """Read a SportyBet booking code (no login): see parse_code."""
+    return parse_code(_call(f"orders/share/{urllib.parse.quote(code.strip().upper())}"), known)
 
 
 def book(selections: list[dict]) -> dict:

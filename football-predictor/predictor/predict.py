@@ -85,9 +85,11 @@ def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tupl
                 if c.startswith("odds:") and pd.notna(fx[c])}
         manual_ok = str(fx.get("news_checked", "")).strip().lower() in ("1", "yes", "true", "y")
         bets, skipped = safety.screen(value.find_value(pred["probs"], odds), fn, h_sh, a_sh, manual_ok)
+        book_probs = {c.split(":", 1)[1]: float(fx[c]) for c in fixtures.columns
+                      if c.startswith("prob:") and pd.notna(fx[c])}   # SportyBet's own, margin-free
         results.append({
             "fx": fx, "league": league, "home": home, "away": away, "pred": pred,
-            "ctx": lm.context(home, away), "odds": odds, "news": fn,
+            "ctx": lm.context(home, away), "odds": odds, "book_probs": book_probs, "news": fn,
             "bets": bets, "skipped": skipped, "picks": picks.best_picks(pred["probs"]),
             "withheld": safety.fixture_reason(fn, h_sh, a_sh, manual_ok),
         })

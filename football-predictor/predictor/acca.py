@@ -6,7 +6,8 @@ different match. Among those, `build` finds the combination whose total odds
 land between the target and target x OVERSHOOT with the highest chance that
 every leg wins.
 
-That chance is estimated from SportyBet's odds, not the model: in the October
+That chance comes from SportyBet's own published probabilities (or its odds
+with the margin removed where it doesn't publish them), not the model: in the October
 2026 backtest the bookmakers' odds predicted results better than the model on
 every market, and blending the model in made them worse. Because each leg
 carries the bookmaker's margin, a few well-priced legs beat many very short
@@ -42,7 +43,7 @@ class Leg:
     result: dict            # the fixture's entry from predict.analyse
     market: str
     odds: float             # SportyBet's current price
-    book_prob: float        # SportyBet's probability, margin removed
+    book_prob: float        # SportyBet's own probability (margin-free)
     model_prob: float
 
     @property
@@ -61,7 +62,8 @@ def candidates(results: list[dict], min_prob: float, news_checked: bool = False)
             continue
         if r["withheld"] and not (news_checked and r["withheld"].startswith("No team news")):
             continue
-        book = sportybet.implied_probs(r["odds"])
+        # SportyBet's own probabilities where it publishes them, else its odds with the margin spread evenly
+        book = {**sportybet.implied_probs(r["odds"]), **r.get("book_probs", {})}
         probs = r["pred"]["probs"]
         for market in LEG_MARKETS:
             o, q, p = r["odds"].get(market), book.get(market), probs.get(market)
@@ -73,16 +75,17 @@ def candidates(results: list[dict], min_prob: float, news_checked: bool = False)
     return legs
 
 
-def build(legs: list[Leg], target: float, max_legs: int = MAX_LEGS) -> list[Leg]:
+def build(legs: list[Leg], target: float, max_legs: int = MAX_LEGS, strict: bool = False) -> list[Leg]:
     """The legs (one per match) with total odds in [target, target x OVERSHOOT]
-    that maximise the product of bookmaker probabilities. [] if none reach it."""
+    that maximise the product of bookmaker probabilities. [] if none reach it.
+    With `strict` the total never lands below the target, even by rounding."""
     groups: dict[str, list[Leg]] = {}
     for leg in legs:
         groups.setdefault(leg.match, []).append(leg)
     groups_list = list(groups.values())
     step = max(STEP, math.log(target * OVERSHOOT) / MAX_COLUMNS)
     # On the coarse step, rounding each leg down guarantees the real total reaches the target.
-    snap = math.floor if step > STEP else round
+    snap = math.floor if step > STEP or strict else round
     lo, hi = math.ceil(math.log(target) / step), int(math.log(target * OVERSHOOT) / step)
     dp = np.full((max_legs + 1, hi + 1), np.inf)
     dp[0, 0] = 0.0

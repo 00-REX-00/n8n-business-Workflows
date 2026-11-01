@@ -19,7 +19,7 @@ from . import data, fixtures, sportybet
 LOG_DIR = data.DEFAULT_CACHE.parent / "odds_log"
 # Fixed column order, so rows from different runs line up in one file.
 SB_COLUMNS = (["taken_at", "league", "event_id", "kickoff", "home", "away", "sb_home", "sb_away"]
-              + [f"odds:{m}" for m in sportybet.MARKETS])
+              + [f"odds:{m}" for m in sportybet.MARKETS] + [f"prob:{m}" for m in sportybet.MARKETS])
 FD_ODDS = [f"{book}{o}" for book in ("B365", "Avg", "Max", "PS") for o in ("H", "D", "A")] \
     + [f"{book}{o}2.5" for book in ("B365", "Avg", "Max", "P") for o in (">", "<")]
 FD_COLUMNS = ["taken_at", "Div", "Date", "Time", "HomeTeam", "AwayTeam", "Referee"] + FD_ODDS
@@ -61,10 +61,18 @@ def take(leagues: list[str], cache_dir: Path = data.DEFAULT_CACHE,
 
 
 def append(df: pd.DataFrame, kind: str, columns: list[str], log_dir: Path = LOG_DIR) -> Path:
-    """Add rows to this month's `<kind>_YYYY-MM.csv`, writing the header once."""
+    """Add rows to this month's `<kind>_YYYY-MM.csv`, writing the header once.
+    If the file was started with other columns (the log gained some), it is
+    rewritten under the combined header first, so no rows or columns are lost."""
     log_dir.mkdir(parents=True, exist_ok=True)
     month = pd.Timestamp(df["taken_at"].iloc[0]) if len(df) else pd.Timestamp.now()
     path = log_dir / f"{kind}_{month:%Y-%m}.csv"
+    columns = list(columns)
+    if path.exists():
+        header = pd.read_csv(path, nrows=0).columns.tolist()
+        if header != columns:
+            columns += [c for c in header if c not in columns]
+            pd.read_csv(path).reindex(columns=columns).to_csv(path, index=False)
     df.reindex(columns=columns).to_csv(path, mode="a", header=not path.exists(), index=False)
     return path
 

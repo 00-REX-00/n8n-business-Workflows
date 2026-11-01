@@ -25,6 +25,7 @@ The app runs **on your own computer**: start it there, then open http://localhos
 | **Match analysis** | Pick one of the league's upcoming fixtures (or any two teams), the referee and **missing players**. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Each market shows the model's fair odds, the **Bet at odds** range and the bookmaker average; type SportyBet's odds and value bets appear with a stake, **Log bet** and **Add to slip** |
 | **Fixtures** | Loads itself: every match in the chosen competitions for today or the next 2–7 days, fetched online, with probabilities, bookmaker average odds and value bets at those odds. Pick any match for the full breakdown. Uploading your own CSV with SportyBet odds still works underneath |
 | **Bet of the day** | An accumulator near your target odds (default 10) from all 16 leagues, built for the highest chance of winning, with one click to a SportyBet booking code. **Mega odds** builds one big ticket (1,000+ odds) from up to two weeks of matches. See [Bet of the day](#bet-of-the-day) |
+| **Check a code** | Paste any SportyBet booking code: every leg's margin, SportyBet's and the model's chance and its problems (started, expensive, model disagrees, no team news). Untick legs to replace and the app rebuilds the ticket for the highest chance at your total odds, then rebooks it. See [Check a code](#check-a-code) |
 | **Results** | Pick a day: every finished match with the model's call, the bookmaker favourite, the top pick and the value bets graded against the final score (ESPN), plus how many wins the model expected. Predictions are rebuilt from data before that day, so the model never sees the scores. Same from the command line: `python -m predictor review --date 2026-10-31` |
 | **Bet slip** | Your picks, singles vs. accumulator maths and warnings. **Get SportyBet booking code** books the slip on SportyBet and gives you the code; a copy list under SportyBet's market names is the fallback |
 | **Bet tracker** | Every logged bet: set won/lost, add closing odds, see profit, ROI, hit rate, closing-line value and a profit chart |
@@ -271,7 +272,7 @@ Even very good betting models make a few percent return over hundreds of bets, w
 
 ## Bet of the day
 
-Pick the day and how likely each leg must be (default 65%). Every leg must be rated at least that likely by **both** SportyBet's own odds (margin removed) and the model, pass the play-safe rules, and come from a different match. For each ticket the app searches every combination for the one whose total odds land between the target and 35% above it with the **highest chance that every leg wins** (`predictor/acca.py`), shows that chance, and books it on SportyBet with one click. Each ticket gets its own booking code.
+Pick the day and how likely each leg must be (default 65%). Every leg must be rated at least that likely by **both** SportyBet's own probabilities and the model, pass the play-safe rules, and come from a different match. For each ticket the app searches every combination for the one whose total odds land between the target and 35% above it with the **highest chance that every leg wins** (`predictor/acca.py`), shows that chance, and books it on SportyBet with one click. Each ticket gets its own booking code.
 
 - **Best from all leagues** (default 10 odds): the best ticket, plus a 2nd and 3rd best that use different matches.
 - **One per league** (default 3 odds, since a league usually has only a few matches a day): the best ticket within each league. Leagues that can't reach the target that day are listed as "no solid bet today". A typical 3-odds league ticket wins about 1 time in 3.5.
@@ -287,11 +288,34 @@ Pick the day and how likely each leg must be (default 65%). Every leg must be ra
 
 Three things to know:
 
-- **The chance comes from SportyBet's odds, not the model.** In the backtest the bookmakers' odds predicted results better than the model in every market, and mixing the model in made them worse. The model is a second opinion: it can veto a leg, not add one.
+- **The chance comes from SportyBet's own published probabilities, not the model** (its odds with the margin removed where it doesn't publish one). In the backtest the bookmakers' odds predicted results better than the model in every market, and mixing the model in made them worse. The model is a second opinion: it can veto a leg, not add one.
 - **Short legs aren't the safe way to big odds.** Each leg carries the bookmaker's margin, so for the same total odds, nine legs at 1.30 win less often than four at 1.78. The search picks whatever combination wins most often.
 - **By SportyBet's own prices, every accumulator loses on average.** A typical 10-odds ticket wins about 1 time in 12 and returns about ₦80 per ₦100 staked over time. Treat it as entertainment and keep the stake to 1% of your bankroll or less.
 
 Free team news only covers the Premier League, so by default the ticket can only use Premier League matches. Tick "I've checked the team news" (the same override as in Match analysis) to use the other leagues, after checking the news for the matches marked ✗.
+
+## Check a code
+
+SportyBet publishes its own probability for every outcome. They add up to exactly 1 per market, so they're its margin-free view. That makes one sum the key to any ticket:
+
+> **chance it wins = expected return ÷ total odds**, where expected return = the product of odds × SportyBet's probability over the legs.
+
+On every leg, odds × probability is below 1: SportyBet keeps the rest. That's about 2% on a big match result, but 4–5% on many goal lines. At a given total odds there are only two ways to raise the chance:
+
+1. **Pay less margin:** pick legs where odds × probability is close to 1. The **Check a code** tab does this: it keeps the legs you tick and rebuilds the rest (from legs that SportyBet and the model both rate likely enough and that pass the play-safe rules) for the highest chance at your total odds. On a big ticket that can nearly double the chance, but it still returns less than you stake on average.
+2. **Find legs SportyBet has priced wrongly**, where the true chance is higher than its probability. That's the only route to profit, and the [odds log](#odds-log) is collecting the data to look for it. A leg where SportyBet's own numbers give odds × probability above 1 is marked "Value by SportyBet's own numbers".
+
+A high win rate on its own just means short odds. No model makes a 1,000-odds ticket likelier than about 1 in 1,000.
+
+Flags per leg (unticked by default, so the app replaces them):
+- already started;
+- suspended;
+- the same match twice;
+- expensive (SportyBet keeps 4% or more, above the slip's median);
+- the model is 10 or more points below SportyBet (a second opinion: the bookmaker is usually more accurate);
+- withheld by the play-safe rules.
+
+Legs in competitions or markets the model doesn't cover are analysed with SportyBet's numbers only, and are kept as they are when you rebook.
 
 ## SportyBet booking codes
 

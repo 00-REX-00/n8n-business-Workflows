@@ -562,6 +562,99 @@ class PicksTest(unittest.TestCase):
         self.assertGreaterEqual(0.80 * lo - 1, value.MIN_EDGE)
 
 
+def code_event(eid, home, away, tournament, status, market, specifier, outcome, odds, prob, desc="Pick"):
+    """One leg as SportyBet's orders/share/{code} returns it (trimmed)."""
+    m = {"id": market, "desc": "Market", "status": 0,
+         "outcomes": [{"id": outcome, "odds": str(odds), "probability": str(prob), "isActive": 1, "desc": desc}]}
+    if specifier:
+        m["specifier"] = specifier
+    return {"eventId": eid, "estimateStartTime": 1793550600000, "status": status, "setScore": "1:0",
+            "playedSeconds": "75:36", "matchStatus": "H2" if status else "Not start",
+            "homeTeamName": home, "awayTeamName": away,
+            "sport": {"category": {"tournament": {"id": tournament, "name": "T"}}}, "markets": [m]}
+
+
+class CheckCodeTest(unittest.TestCase):
+    known = {"E0": ["Liverpool", "Arsenal", "Chelsea", "Fulham"]}
+
+    def code(self):
+        return {"outcomes": [
+            code_event("e1", "Liverpool", "Arsenal", "sr:tournament:17", 0, "1", "", "1", 2.0, 0.49),       # 2% margin
+            code_event("e2", "Chelsea", "Fulham", "sr:tournament:17", 1, "18", "total=2.5", "12", 1.8, 0.53),  # live
+            code_event("e3", "Club A", "Club B", "sr:tournament:999", 0, "1", "", "3", 1.5, 0.62),        # 7% margin
+            code_event("e1", "Liverpool", "Arsenal", "sr:tournament:17", 0, "999", "", "1", 3.0, 0.34),   # same match
+        ], "unavailableOutcomes": [{"eventId": "x"}]}
+
+    def test_parse_code(self):
+        from predictor import sportybet
+        legs, gone = sportybet.parse_code(self.code(), self.known)
+        self.assertEqual(gone, 1)
+        self.assertEqual([leg["league"] for leg in legs], ["E0", "E0", None, "E0"])
+        self.assertEqual([leg["market"] for leg in legs], ["1", "over_2.5", "2", None])
+        self.assertEqual((legs[0]["home"], legs[0]["away"]), ("Liverpool", "Arsenal"))
+        self.assertTrue(legs[1]["started"])
+        self.assertIn("Live 1:0", legs[1]["state"])
+        self.assertEqual(sportybet.raw_selection(legs[1]),
+                         {"eventId": "e2", "marketId": "18", "specifier": "total=2.5", "outcomeId": "12"})
+        self.assertAlmostEqual(legs[0]["prob"], 0.49)
+
+    def test_analyse_flags_and_keep(self):
+        from predictor import doctor, news, sportybet
+        legs, _ = sportybet.parse_code(self.code(), self.known)
+        fn = news.FixtureNews(found=False, source="", note="", home=news.TeamNews(), away=news.TeamNews())
+        results = {"e1": {"pred": {"probs": {"1": 0.30}}, "withheld": None, "news": fn}}   # model far below 49%
+        check = doctor.analyse(legs, results)
+        problems = check["problems"].tolist()
+        self.assertTrue(any("Model disagrees" in p for p in problems[0]))
+        self.assertTrue(any("Already started" in p for p in problems[1]))
+        self.assertTrue(any("Expensive" in p for p in problems[2]))       # 7% > median and >= 4%
+        self.assertTrue(any("Same match twice" in p for p in problems[3]))
+        self.assertIn("Model doesn't cover this match", check["notes"][2])
+        self.assertAlmostEqual(check["margin"][0], 1 - 2.0 * 0.49)
+        self.assertEqual(doctor.default_keep(check), [False, False, False, False])
+
+    def test_improve_keeps_legs_and_hits_the_target(self):
+        import math
+        from predictor import acca, doctor, sportybet
+        legs, _ = sportybet.parse_code(self.code(), self.known)
+        def pool_leg(eid, odds, q):
+            return acca.Leg({"home": eid, "away": "Z", "league": "E0", "fx": {"kickoff": pd.Timestamp("2026-11-02"),
+                                                                                "event_id": eid}}, "1", odds, q, q)
+        pool = [pool_leg("e1", 1.5, 0.66), pool_leg("p1", 1.6, 0.61), pool_leg("p2", 1.7, 0.58),
+                pool_leg("p3", 2.5, 0.38)]
+        kept, fill = doctor.improve(legs, [True, False, False, False], pool, 5.0)
+        self.assertEqual([leg["event_id"] for leg in kept], ["e1"])
+        self.assertNotIn("e1", [leg.result["fx"]["event_id"] for leg in fill])   # kept match not reused
+        total = 2.0 * math.prod(leg.odds for leg in fill)
+        self.assertTrue(5.0 <= total <= 5.0 * acca.OVERSHOOT * 1.01)   # strict: never below the target
+        self.assertEqual(doctor.improve(legs, [True, True, False, False], pool, 3.0)[1], [])  # kept already reach it
+        self.assertIsNone(doctor.improve(legs, [True, False, False, False], pool[:1], 50.0))
+
+    def test_strict_build_never_lands_below_the_target(self):
+        import math
+        from predictor import acca
+        rng = np.random.default_rng(11)
+        legs = [AccaTest.leg(f"H{i}-A{i}", "1", round(float(rng.uniform(1.2, 1.9)), 2), 0.6) for i in range(30)]
+        for target in (2.37, 4.81, 6.02, 9.99, 13.7):
+            got = acca.build(legs, target, strict=True)
+            self.assertGreaterEqual(math.prod(leg.odds for leg in got), target)
+
+    def test_probabilities_flow_into_tickets(self):
+        from predictor import acca, sportybet
+        t = SportyBetTest().tournaments()
+        t[0]["events"][0]["markets"][0]["outcomes"][0]["probability"] = "0.36"
+        ev = sportybet.parse_events(t, "E0", ["Liverpool", "Arsenal"])
+        self.assertEqual(ev["prob:1"][0], 0.36)
+        fx = pd.DataFrame({"league": ["E0"], "home": ["Liverpool"], "away": ["Arsenal"], "odds:1": [2.33]})
+        self.assertEqual(sportybet.merge_odds(fx, ev)["prob:1"][0], 0.36)
+        r = {"fx": {"odds_source": "SportyBet", "event_id": "sr:match:1"}, "withheld": None,
+             "odds": {"1": 2.6, "X": 3.5, "2": 2.5}, "book_probs": {"1": 0.36},
+             "pred": {"probs": {"1": 0.40, "X": 0.3, "2": 0.3}}}
+        got = {leg.market: leg.book_prob for leg in acca.candidates([r], 0.30)}
+        self.assertEqual(got["1"], 0.36)                                          # SportyBet's own, not from odds
+        self.assertAlmostEqual(got["2"], sportybet.implied_probs(r["odds"])["2"])  # no probability: falls back
+
+
 class ConsensusTest(unittest.TestCase):
     @staticmethod
     def match():
@@ -650,6 +743,21 @@ class SnapshotTest(unittest.TestCase):
             self.assertEqual(list(back.columns), snapshot.SB_COLUMNS)
             self.assertEqual(back["odds:1"].tolist()[0], 2.0)
             self.assertEqual(back["odds:X"].tolist()[1], 3.1)
+
+    def test_append_rewrites_an_older_header(self):
+        import tempfile
+        from pathlib import Path
+        from predictor import snapshot
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sportybet_2026-11.csv"
+            pd.DataFrame([{"taken_at": "2026-11-01 08:00", "event_id": "e1", "odds:1": 2.0}]).to_csv(path, index=False)
+            snapshot.append(pd.DataFrame([{"taken_at": pd.Timestamp("2026-11-01 10:00"), "event_id": "e1",
+                                           "odds:1": 1.9, "prob:1": 0.5}]), "sportybet", snapshot.SB_COLUMNS, Path(tmp))
+            back = pd.read_csv(path)
+            self.assertEqual(back["odds:1"].tolist(), [2.0, 1.9])
+            self.assertTrue(pd.isna(back["prob:1"][0]))
+            self.assertEqual(back["prob:1"][1], 0.5)
+            self.assertEqual(list(back.columns), snapshot.SB_COLUMNS)
 
     def test_closing_is_last_snapshot_before_kickoff(self):
         from predictor import snapshot
