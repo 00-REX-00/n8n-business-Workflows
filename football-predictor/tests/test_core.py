@@ -413,6 +413,40 @@ class SportyBetTest(unittest.TestCase):
                          {"eventId": "sr:match:1", "marketId": "10", "specifier": None, "outcomeId": "11"})
         self.assertEqual(sportybet.selection("sr:match:1", "home_over_0.5")["specifier"], "total=0.5")
 
+    def test_events_pages_ten_at_a_time(self):
+        from unittest import mock
+        from predictor import sportybet
+        calls = []
+
+        def fake_call(path, body=None, **params):   # the feed sends <= 10 events per page
+            calls.append(params)
+            start = (params["pageNum"] - 1) * params["pageSize"]
+            evs = [{"eventId": f"sr:match:{i}", "homeTeamName": "Liverpool", "awayTeamName": "Arsenal",
+                    "estimateStartTime": 1793550600000, "markets": []} for i in range(start, min(start + 10, 24))]
+            return {"totalNum": 24, "tournaments": [{"events": evs}]}
+        with mock.patch.object(sportybet, "_call", fake_call):
+            ev = sportybet.events("E0", ["Liverpool", "Arsenal"])
+        self.assertEqual(len(ev), 24)
+        self.assertEqual([c["pageNum"] for c in calls], [1, 2, 3])
+        self.assertTrue(all(c["pageSize"] == sportybet.PAGE_SIZE for c in calls))
+
+    def test_add_unlisted(self):
+        from predictor import sportybet
+        fx = pd.DataFrame({"league": ["E0"], "home": ["Liverpool"], "away": ["Arsenal"],
+                           "kickoff": [pd.Timestamp("2026-11-01 17:30")], "odds:1": [2.6]})
+        sb = pd.DataFrame({"league": ["E0", "E0", "E0", "E0"], "event_id": ["a", "b", "c", "d"],
+                           "home": ["Liverpool", "Chelsea", "Fulham", None], "away": ["Arsenal", "Leeds", "Wolves", "X"],
+                           "sb_home": ["", "", "", "X FC"], "sb_away": ["", "", "", ""],
+                           "kickoff": pd.to_datetime(["2026-11-01 17:30", "2026-11-05 20:00", "2026-11-20 15:00",
+                                                      "2026-11-05 20:00"]),
+                           "odds:1": [2.6, 1.8, 2.0, 3.0]})
+        out = sportybet.add_unlisted(fx, sb, pd.Timestamp("2026-11-01 12:00"), pd.Timestamp("2026-11-08"))
+        self.assertEqual(out["home"].tolist(), ["Liverpool", "Chelsea"])     # listed, in window, named only
+        added = out.iloc[1]
+        self.assertEqual((added["odds_source"], added["event_id"], added["date"]),
+                         ("SportyBet", "b", pd.Timestamp("2026-11-05")))
+        self.assertNotIn("sb_home", out.columns)
+
     def test_parse_events_keep_unknown(self):
         from predictor import sportybet
         ev = sportybet.parse_events(self.tournaments(), "E0", ["Liverpool", "Arsenal"], keep_unknown=True)
@@ -480,6 +514,34 @@ class AccaTest(unittest.TestCase):
         per = acca.by_league(legs, 3.0)
         self.assertEqual(set(per), {"E0", "I1"})                            # SP1's 2 legs can't reach 3 odds
         self.assertTrue(all(l.result["league"] == lg for lg, t in per.items() for l in t))
+
+    def test_mega_ticket(self):
+        import math
+        from predictor import acca
+        rng = np.random.default_rng(5)
+        legs = []
+        for i in range(60):                                       # a week of matches, 2 legs each
+            for mk in ("1", "1X"):
+                o = round(float(rng.uniform(1.25, 1.75)), 2)
+                legs.append(self.leg(f"H{i}-A{i}", mk, o, 1 / o / 1.05))
+        got = acca.build(legs, 3000.0, acca.MEGA_MAX_LEGS)
+        s = acca.summary(got)
+        daily = acca.build(legs, 3000.0)                          # at most MAX_LEGS legs
+        self.assertGreaterEqual(s["chance"], acca.summary(daily)["chance"] * 0.999 if daily else 0.0)
+        self.assertGreaterEqual(s["odds"], 3000.0)                # coarse step rounds legs down: never short
+        self.assertLess(s["odds"], 3000.0 * acca.OVERSHOOT * 1.15)
+        self.assertLessEqual(len(got), acca.MEGA_MAX_LEGS)
+        self.assertEqual(len({leg.match for leg in got}), len(got))
+        # it beats the naive ticket: the most likely legs until the odds pass the target
+        naive, odds = [], 1.0
+        for leg in sorted(legs, key=lambda l: -l.book_prob):
+            if odds >= 3000.0:
+                break
+            if leg.match not in {n.match for n in naive}:
+                naive.append(leg)
+                odds *= leg.odds
+        self.assertGreaterEqual(s["chance"], math.prod(n.book_prob for n in naive))
+        self.assertAlmostEqual(acca.reach(legs[:4], 1), max(l.odds for l in legs[:4]))
 
     def test_implied_probs(self):
         from predictor import sportybet

@@ -41,6 +41,7 @@ GOOD = "#0ca30c"
 
 absences_leagues = {"E0", "SP1", "I1", "D1", "F1"}
 PICKER_DAYS = 7           # how far ahead the Match analysis fixture picker looks
+MEGA_DAYS = 14            # longest window for Bet of the day's "Mega odds" tickets
 
 ODDS_MARKETS = [
     "1", "X", "2", "1X", "X2", "12",
@@ -51,6 +52,9 @@ ODDS_MARKETS = [
 ]
 
 st.set_page_config(page_title="Football Predictor", page_icon="⚽", layout="wide")
+# Loading screen: turns every spinner into a full-screen bouncing-football overlay.
+st.markdown(f"<style>{(ROOT / 'assets' / 'loader.css').read_text(encoding='utf-8')}</style>",
+            unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- data/model
@@ -100,28 +104,38 @@ def sportybet_events(league: str, known: tuple[str, ...]) -> pd.DataFrame:
     return sportybet.events(league, list(known))
 
 
-def with_sportybet(fx: pd.DataFrame, known: dict[str, list[str]], notes: list[str]) -> pd.DataFrame:
-    """Swap in SportyBet's current odds where it lists the match."""
+def sportybet_odds(leagues: tuple[str, ...], known: dict[str, list[str]], notes: list[str]) -> pd.DataFrame:
+    """SportyBet's upcoming events with odds, for every league it covers."""
     frames = []
-    for lg in sorted(set(fx["league"])):
+    for lg in leagues:
         try:
             frames.append(sportybet_events(lg, tuple(known.get(lg, []))))
         except Exception as exc:
             notes.append(f"SportyBet odds unavailable for {data.LEAGUES.get(lg, lg)} ({exc}); using the "
                          "bookmaker average.")
     frames = [f for f in frames if not f.empty]
-    return sportybet.merge_odds(fx, pd.concat(frames, ignore_index=True) if frames else pd.DataFrame())
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 @st.cache_data(ttl=600, show_spinner="Analysing fixtures…")
 def analyse_upcoming(leagues: tuple[str, ...], days: int, today: date, refresh_token: int,
-                     key_token: str) -> tuple[list[dict], list[str]]:
+                     key_token: str, sportybet_only: bool = False) -> tuple[list[dict], list[str]]:
+    """Predict the next `days` days' fixtures, at SportyBet's odds where it lists the match.
+
+    Matches SportyBet lists that the fixture sources don't have yet are added.
+    With `sportybet_only`, matches SportyBet doesn't price are skipped (tickets
+    can't use them), which saves time over long windows."""
     fx, notes = upcoming_fixtures(leagues, days, today, refresh_token)
     notes = list(notes)
+    matches = load_matches(leagues, refresh_token)
+    sb = sportybet_odds(leagues, fixtures.known_teams(matches), notes)
+    fx = sportybet.merge_odds(fx, sb)
+    now = pd.Timestamp.now()
+    fx = sportybet.add_unlisted(fx, sb, now, now.normalize() + pd.Timedelta(days=days))
+    if sportybet_only:
+        fx = fx[fx["odds_source"] == "SportyBet"]
     if fx.empty:
         return [], notes
-    matches = load_matches(leagues, refresh_token)
-    fx = with_sportybet(fx, fixtures.known_teams(matches), notes)
     results, warnings = predict.analyse(predict.normalise_fixtures(fx), matches)
     return results, notes + warnings
 
@@ -312,14 +326,19 @@ def top_pick_text(r: dict) -> str:
     return f"⛔ {text}" if r["withheld"] else text
 
 
+def chance_text(p: float) -> str:
+    """'8.0%' for everyday chances, '1 in 9,300' for tiny ones."""
+    return f"{p:.1%}" if p >= 0.01 else f"1 in {float(f'{1 / p:.2g}'):,.0f}"
+
+
 def show_ticket(ticket: list[acca.Leg], key: str) -> None:
     """Metrics, legs, booking code and add-to-slip for one Bet-of-the-day ticket."""
     s = acca.summary(ticket)
     k = st.columns(4)
-    k[0].metric("Total odds", f"{s['odds']:.2f}", help=f"{s['legs']} legs")
-    k[1].metric("Chance it wins", f"{s['chance']:.1%}", help=f"About 1 in {1 / s['chance']:.0f}, "
+    k[0].metric("Total odds", f"{s['odds']:,.2f}", help=f"{s['legs']} legs")
+    k[1].metric("Chance it wins", chance_text(s["chance"]), help=f"About 1 in {1 / s['chance']:,.0f}, "
                 "by SportyBet's own odds with the margin removed")
-    k[2].metric("Model's estimate", f"{s['model_chance']:.1%}",
+    k[2].metric("Model's estimate", chance_text(s["model_chance"]),
                 help="The model is less accurate than the bookmaker's odds (backtest), so it's a second opinion")
     k[3].metric("Back per ₦100, on average", f"₦{100 * s['expected_return']:.0f}",
                 help="Over many tickets like this, by SportyBet's own prices. Below ₦100 means a loss on average.")
@@ -330,8 +349,12 @@ def show_ticket(ticket: list[acca.Leg], key: str) -> None:
             market, pick = f"{team} Over/Under", f"{team} {pick.lower()}"
         return market, pick
 
+    days = pd.Series([leg.result["fx"]["kickoff"].date() for leg in ticket]).value_counts().sort_index()
+    if len(days) > 1:
+        st.caption("Spread over " + " · ".join(f"{d:%a %d %b} ({n} leg{'s' if n > 1 else ''})"
+                                               for d, n in days.items()))
     st.dataframe(pd.DataFrame([{
-        "Kick-off": f"{leg.result['fx']['kickoff']:%a %H:%M}",
+        "Kick-off": f"{leg.result['fx']['kickoff']:%a %d %b %H:%M}",
         "League": data.LEAGUES.get(leg.result["league"], leg.result["league"]), "Match": leg.match,
         "SportyBet market": names(leg)[0], "Pick": names(leg)[1],
         "Odds": leg.odds, "SportyBet chance": leg.book_prob, "Model chance": leg.model_prob,
@@ -369,7 +392,7 @@ def show_ticket(ticket: list[acca.Leg], key: str) -> None:
 
 def ticket_title(name: str, ticket: list[acca.Leg]) -> str:
     s = acca.summary(ticket)
-    return f"{name} · {s['legs']} legs · {s['odds']:.2f} odds · {s['chance']:.1%} chance"
+    return f"{name} · {s['legs']} legs · {s['odds']:,.2f} odds · {chance_text(s['chance'])} chance"
 
 
 def playable_picks(r: dict) -> list[picks.Pick]:
@@ -481,8 +504,10 @@ with tab_match:
     fx_here = fx_here[(fx_here["kickoff"] > pd.Timestamp.now()) & fx_here["home"].isin(teams_list)
                       & fx_here["away"].isin(teams_list)].reset_index(drop=True)
     sb_notes: list[str] = []
-    if not fx_here.empty:
-        fx_here = with_sportybet(fx_here, {league: teams_list}, sb_notes)
+    sb_here = sportybet_odds((league,), {league: teams_list}, sb_notes)
+    now_here = pd.Timestamp.now()
+    fx_here = sportybet.add_unlisted(sportybet.merge_odds(fx_here, sb_here), sb_here, now_here,
+                                     now_here.normalize() + pd.Timedelta(days=PICKER_DAYS))
     for note in sb_notes:
         st.caption(note)
     fx_labels = [f"{k:%a %d %b, %H:%M} · {h} v {a}"
@@ -745,7 +770,7 @@ with tab_list:
         if upload is not None:
             fx_csv = predict.read_fixtures(upload)
             all_leagues = tuple(sorted(fx_csv["league"].unique()))
-            with st.spinner("Predicting…"):
+            with st.spinner("Predicting…", show_time=True):
                 results, warnings = predict.analyse(fx_csv, load_matches(all_leagues, st.session_state.refresh))
             for w in warnings:
                 st.warning(w)
@@ -781,13 +806,20 @@ with tab_list:
 
 with tab_botd:
     st.subheader("Bet of the day")
+    botd_mode = st.radio("Ticket type", ["Daily", "Mega odds"], horizontal=True, key="botd_mode",
+                         captions=["Today or tomorrow", f"Big odds from up to {MEGA_DAYS} days of matches"])
     st.caption("Accumulators from every league SportyBet and the model both cover. Each leg must be likely by "
                "**both** SportyBet's own odds and the model, pass the play-safe rules, and come from a different "
                "match. Among those, each ticket is the combination with the highest chance that every leg wins, "
                "judged by SportyBet's odds (they predicted results better than the model in the backtest). A few "
                "well-priced legs beat many very short ones: every leg adds the bookmaker's margin.")
     g1, g2 = st.columns(2)
-    botd_day = g1.selectbox("Day", [0, 1], format_func=lambda d: "Today" if d == 0 else "Tomorrow", key="botd_day")
+    if botd_mode == "Daily":
+        botd_day = g1.selectbox("Day", [0, 1], format_func=lambda d: "Today" if d == 0 else "Tomorrow",
+                                key="botd_day")
+    else:
+        mega_days = g1.slider("Days ahead", 2, MEGA_DAYS, 7, key="mega_days",
+                              help="SportyBet lists matches about a week ahead, so later days usually add nothing yet")
     botd_min = g2.slider("Each leg at least", 0.50, 0.85, 0.65, 0.05, format="%.2f", key="botd_min",
                          help="Minimum chance per leg, by both SportyBet's odds and the model")
     sb_leagues = [lg for lg in data.LEAGUES if lg in sportybet.TOURNAMENTS]
@@ -797,7 +829,41 @@ with tab_botd:
                             key="botd_news",
                             help="The play-safe rule is no news, no bet. Free team news only covers the Premier "
                                  "League, so without this the ticket can only use Premier League matches.")
-    if botd_leagues:
+    botd_notes: list[str] = []
+    if botd_leagues and botd_mode == "Mega odds":
+        everything, botd_notes = analyse_upcoming(tuple(sorted(botd_leagues)), MEGA_DAYS, date.today(),
+                                                  st.session_state.refresh, NEWS_KEY, sportybet_only=True)
+        now = pd.Timestamp.now()
+        window = [r for r in everything
+                  if now < r["fx"]["kickoff"] < now.normalize() + pd.Timedelta(days=mega_days)]
+        pool = acca.candidates(window, botd_min, botd_news)
+        match_days = sorted({r["fx"]["kickoff"].date() for r in window})
+        st.caption(f"{len(window)} matches on SportyBet in the next {mega_days} days, on {len(match_days)} match days"
+                   + (f" (the last on {match_days[-1]:%a %d %b})" if match_days else "")
+                   + f"; {len(pool)} possible legs from {len({leg.match for leg in pool})} matches. SportyBet lists "
+                   "matches about a week ahead.")
+        mega_target = st.number_input("Total odds", min_value=50.0, max_value=100_000.0, value=1000.0, step=500.0,
+                                      key="mega_target")
+        st.warning(f"Big odds mean a small chance, whichever legs are picked. Even if SportyBet's prices were perfectly "
+                   f"fair, a {mega_target:,.0f}-odds ticket would win 1 time in {mega_target:,.0f}, and every leg's "
+                   "margin makes it rarer still. The builder finds the least-bad ticket: the one with the highest "
+                   "chance for those odds. On average you get back far less than you stake (see **Back per ₦100**). "
+                   "Treat it like a lottery ticket and stake only what you'd be fine losing every time, at most "
+                   f"{slip.ACCA_MAX_STAKE:.0%} of your bankroll (₦{bankroll * slip.ACCA_MAX_STAKE:,.0f}).")
+        tickets = acca.alternatives(pool, mega_target, max_legs=acca.MEGA_MAX_LEGS)
+        if not tickets:
+            st.warning(f"No ticket reaches {mega_target:,.0f} odds with these settings (the most these legs can make is "
+                       f"about {acca.reach(pool, acca.MEGA_MAX_LEGS):,.0f}). Try lowering the per-leg minimum or the "
+                       "total odds, more days or more competitions"
+                       + ("" if botd_news else ", or ticking the team-news box") + ".")
+        for i, ticket in enumerate(tickets):
+            with st.expander(ticket_title("Mega ticket" if i == 0 else f"Alternative {i + 1}", ticket),
+                             expanded=i == 0):
+                show_ticket(ticket, f"mega-{i}")
+        if tickets:
+            st.caption(f"Tickets use up to {acca.MEGA_MAX_LEGS} legs and never share a match. SportyBet may cap how "
+                       "many selections one ticket can hold: if booking fails, lower the total odds.")
+    elif botd_leagues:
         day = date.today() + timedelta(days=botd_day)
         everything, botd_notes = analyse_upcoming(tuple(sorted(botd_leagues)), 2, date.today(),
                                                   st.session_state.refresh, NEWS_KEY)
@@ -813,17 +879,14 @@ with tab_botd:
                    f"(₦{bankroll * slip.ACCA_MAX_STAKE:,.0f}).")
 
         st.markdown("#### Best from all leagues")
-        botd_target = st.number_input("Total odds", min_value=2.0, max_value=100.0, value=10.0, step=1.0,
+        botd_target = st.number_input("Total odds", min_value=2.0, max_value=1000.0, value=10.0, step=1.0,
                                       key="botd_target")
         tickets = acca.alternatives(pool, botd_target)
         if not tickets:
-            longest: dict[str, float] = {}
-            for leg in pool:
-                longest[leg.match] = max(longest.get(leg.match, 0.0), leg.odds)
-            reach = math.prod(sorted(longest.values(), reverse=True)[:acca.MAX_LEGS]) if longest else 1.0
-            st.warning(f"No ticket reaches {botd_target:.0f} odds with these settings (the most these legs can make "
-                       f"is about {reach:.1f}). Try lowering the per-leg minimum or the total odds, another day, "
-                       "more competitions" + ("" if botd_news else ", or ticking the team-news box") + ".")
+            st.warning(f"No ticket reaches {botd_target:,.0f} odds with these settings (the most these legs can make "
+                       f"is about {acca.reach(pool):,.1f}). Try lowering the per-leg minimum or the total odds, "
+                       "another day, **Mega odds** (several days), more competitions"
+                       + ("" if botd_news else ", or ticking the team-news box") + ".")
         for i, ticket in enumerate(tickets):
             with st.expander(ticket_title("Best ticket" if i == 0 else f"Alternative {i + 1}", ticket),
                              expanded=i == 0):
@@ -844,7 +907,7 @@ with tab_botd:
         if no_bet:
             st.caption("No solid bet today: " + ", ".join(no_bet) + "."
                        + ("" if botd_news else " Without the team-news box only the Premier League can qualify."))
-    for note in botd_notes if botd_leagues else []:
+    for note in botd_notes:
         st.caption(note)
 
 
@@ -1092,7 +1155,7 @@ with tab_report:
                                     format_func=lambda c: data.LEAGUES[c])
         refit_cal = b2.checkbox("Update calibration from results", value=False)
     if not SHARED and b2.button("Run backtest", type="primary") and seasons and bt_leagues:
-        with st.spinner("Running backtest (about 30 s per league per season)…"):
+        with st.spinner("Running backtest (about 30 s per league per season)…", show_time=True):
             hist = data.load_matches(bt_leagues, list(range(min(seasons) - 3, max(seasons) + 1)))
             res = backtest.run(hist, bt_leagues, seasons)
             BACKTEST_CSV.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,142 @@
+/* Loading screen. Every Streamlit spinner (st.spinner and the messages of cached
+   functions such as "Analysing fixtures…") becomes a full-screen overlay: a
+   football bouncing on a strip of pitch, the current step underneath and a
+   sliding progress bar. Streamlit 1.66 spinner markup:
+   [data-testid=stSpinner] > div > (icon wrapper, div > [role=status] + time). */
+
+[data-testid="stSpinner"] {
+  --fp-card: #141924;
+  --fp-line: rgba(255, 255, 255, 0.09);
+  --fp-text: #f3f5fa;
+  --fp-muted: rgba(243, 245, 250, 0.62);
+  --fp-accent: #ff4b4b;
+  --fp-grass-a: #2f9e44;
+  --fp-grass-b: #2b8a3e;
+  --fp-ground: 18px;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 999990 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 16px !important;
+  background: rgba(8, 10, 16, 0.55) !important;
+  backdrop-filter: blur(3px);
+  animation: fp-fade 0.2s ease-out;
+}
+
+/* the card */
+[data-testid="stSpinner"] > div {
+  flex-direction: column !important;
+  align-items: center !important;
+  width: auto !important;
+  min-width: 260px;
+  max-width: min(440px, calc(100vw - 32px));
+  gap: 14px !important;
+  padding: 24px 32px 22px;
+  border-radius: 20px;
+  background: var(--fp-card);
+  border: 1px solid var(--fp-line);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  color: var(--fp-text);
+}
+
+/* the stage: icon wrapper turned into a little pitch with the ball and its shadow */
+[data-testid="stSpinner"] > div > :first-child {
+  position: relative;
+  display: block !important;
+  width: 180px !important;
+  height: 128px !important;   /* tall enough for the whole bounce: the edge-fade mask clips outside it */
+  margin: 0 !important;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 calc(100% - 12px) / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--fp-grass-a) 0 14px, var(--fp-grass-b) 14px 28px) 0 100% / 28px 12px repeat-x;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+  animation: fp-grass 0.5s linear infinite;
+}
+[data-testid="stSpinnerIcon"] {
+  display: none !important;
+}
+/* the ball: squashed on landing, spinning, decelerating up and accelerating down */
+[data-testid="stSpinner"] > div > :first-child::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--fp-ground) - 4px);
+  width: 52px;
+  height: 52px;
+  margin-left: -26px;
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGRlZnM+PGNsaXBQYXRoIGlkPSJjIj48Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIyOS4wIi8+PC9jbGlwUGF0aD48cmFkaWFsR3JhZGllbnQgaWQ9InMiIGN4PSIzOCUiIGN5PSIzMiUiIHI9Ijc1JSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmIiBzdG9wLW9wYWNpdHk9IjAiLz48c3RvcCBvZmZzZXQ9Ii42NSIgc3RvcC1jb2xvcj0iIzBiMTAyMCIgc3RvcC1vcGFjaXR5PSIuMDgiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMwYjEwMjAiIHN0b3Atb3BhY2l0eT0iLjQyIi8+PC9yYWRpYWxHcmFkaWVudD48L2RlZnM+PGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMjkuMCIgZmlsbD0iI2Y3ZjhmYSIvPjxnIGNsaXAtcGF0aD0idXJsKCNjKSIgc3Ryb2tlPSIjMWQyNDMzIiBzdHJva2Utd2lkdGg9IjEuNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj48bGluZSB4MT0iMzIuMDAiIHkxPSIyMS41MCIgeDI9IjMyLjAwIiB5Mj0iMTIuNzAiLz48bGluZSB4MT0iMzkuODAiIHkxPSI3LjAzIiB4Mj0iNTMuMzMiIHkyPSIxNi44NyIvPjxsaW5lIHgxPSIyNy4xOCIgeTE9Ii0yLjEzIiB4Mj0iMjEuNjUiIHkyPSItNi42NCIvPjxsaW5lIHgxPSIzNi44MiIgeTE9Ii0yLjEzIiB4Mj0iNDIuMzUiIHkyPSItNi42NCIvPjxsaW5lIHgxPSI0MS45OSIgeTE9IjI4Ljc2IiB4Mj0iNTAuMzYiIHkyPSIyNi4wNCIvPjxsaW5lIHgxPSI1OC4xNSIgeTE9IjMxLjcwIiB4Mj0iNTIuOTgiIHkyPSI0Ny42MSIvPjxsaW5lIHgxPSI2Mi45NyIgeTE9IjE2Ljg3IiB4Mj0iNjUuNTUiIHkyPSIxMC4yMSIvPjxsaW5lIHgxPSI2NS45NSIgeTE9IjI2LjA0IiB4Mj0iNzEuOTUiIHkyPSIyOS45MSIvPjxsaW5lIHgxPSIzOC4xNyIgeTE9IjQwLjQ5IiB4Mj0iNDMuMzQiIHkyPSI0Ny42MSIvPjxsaW5lIHgxPSI0MC4zNyIgeTE9IjU2Ljc4IiB4Mj0iMjMuNjMiIHkyPSI1Ni43OCIvPjxsaW5lIHgxPSI1NS45NiIgeTE9IjU2Ljc4IiB4Mj0iNjMuMDkiIHkyPSI1Ny4xNyIvPjxsaW5lIHgxPSI0OC4xNiIgeTE9IjYyLjQ1IiB4Mj0iNDYuMzMiIHkyPSI2OS4zNCIvPjxsaW5lIHgxPSIyNS44MyIgeTE9IjQwLjQ5IiB4Mj0iMjAuNjYiIHkyPSI0Ny42MSIvPjxsaW5lIHgxPSIxMS4wMiIgeTE9IjQ3LjYxIiB4Mj0iNS44NSIgeTI9IjMxLjcwIi8+PGxpbmUgeDE9IjE1Ljg0IiB5MT0iNjIuNDUiIHgyPSIxNy42NyIgeTI9IjY5LjM0Ii8+PGxpbmUgeDE9IjguMDQiIHkxPSI1Ni43OCIgeDI9IjAuOTEiIHkyPSI1Ny4xNyIvPjxsaW5lIHgxPSIyMi4wMSIgeTE9IjI4Ljc2IiB4Mj0iMTMuNjQiIHkyPSIyNi4wNCIvPjxsaW5lIHgxPSIxMC42NyIgeTE9IjE2Ljg3IiB4Mj0iMjQuMjAiIHkyPSI3LjAzIi8+PGxpbmUgeDE9Ii0xLjk1IiB5MT0iMjYuMDQiIHgyPSItNy45NSIgeTI9IjI5LjkxIi8+PGxpbmUgeDE9IjEuMDMiIHkxPSIxNi44NyIgeDI9Ii0xLjU1IiB5Mj0iMTAuMjEiLz48cG9seWdvbiBwb2ludHM9IjMyLjAwLDIxLjUwIDQxLjk5LDI4Ljc2IDM4LjE3LDQwLjQ5IDI1LjgzLDQwLjQ5IDIyLjAxLDI4Ljc2IiBmaWxsPSIjMWQyNDMzIi8+PHBvbHlnb24gcG9pbnRzPSIzMi4wMCwxMi43MCAyNC4yMCw3LjAzIDI3LjE4LC0yLjEzIDM2LjgyLC0yLjEzIDM5LjgwLDcuMDMiIGZpbGw9IiMxZDI0MzMiLz48cG9seWdvbiBwb2ludHM9IjUwLjM2LDI2LjA0IDUzLjMzLDE2Ljg3IDYyLjk3LDE2Ljg3IDY1Ljk1LDI2LjA0IDU4LjE1LDMxLjcwIiBmaWxsPSIjMWQyNDMzIi8+PHBvbHlnb24gcG9pbnRzPSI0My4zNCw0Ny42MSA1Mi45OCw0Ny42MSA1NS45Niw1Ni43OCA0OC4xNiw2Mi40NSA0MC4zNyw1Ni43OCIgZmlsbD0iIzFkMjQzMyIvPjxwb2x5Z29uIHBvaW50cz0iMjAuNjYsNDcuNjEgMjMuNjMsNTYuNzggMTUuODQsNjIuNDUgOC4wNCw1Ni43OCAxMS4wMiw0Ny42MSIgZmlsbD0iIzFkMjQzMyIvPjxwb2x5Z29uIHBvaW50cz0iMTMuNjQsMjYuMDQgNS44NSwzMS43MCAtMS45NSwyNi4wNCAxLjAzLDE2Ljg3IDEwLjY3LDE2Ljg3IiBmaWxsPSIjMWQyNDMzIi8+PC9nPjxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjI5LjAiIGZpbGw9InVybCgjcykiLz48Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIyOS4wIiBmaWxsPSJub25lIiBzdHJva2U9IiMxZDI0MzMiIHN0cm9rZS13aWR0aD0iMS42Ii8+PGVsbGlwc2UgY3g9IjIzIiBjeT0iMTgiIHJ4PSI3IiByeT0iNCIgZmlsbD0iI2ZmZiIgb3BhY2l0eT0iLjU1IiB0cmFuc2Zvcm09InJvdGF0ZSgtMzAgMjMgMTgpIi8+PC9zdmc+") center / contain no-repeat;
+  animation:
+    fp-hop 0.9s infinite,
+    fp-squash 0.9s linear infinite,
+    fp-spin 1.6s linear infinite;
+}
+[data-testid="stSpinner"] > div > :first-child::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--fp-ground) - 5px);
+  width: 46px;
+  height: 9px;
+  margin-left: -23px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), transparent);
+  animation: fp-shadow 0.9s infinite;
+}
+
+/* the message (and the elapsed time when a spinner shows it) */
+[data-testid="stSpinner"] > div > :nth-child(2) {
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 2px !important;
+}
+[data-testid="stSpinner"] [role="status"] p {
+  margin: 0;
+  color: var(--fp-text);
+  font-size: 1.02rem;
+  font-weight: 600;
+  text-align: center;
+}
+[data-testid="stSpinner"] > div > :nth-child(2) > span {
+  color: var(--fp-muted);
+}
+
+/* indeterminate progress bar */
+[data-testid="stSpinner"] > div::after {
+  content: "";
+  width: 170px;
+  height: 3px;
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, transparent, var(--fp-accent), transparent) -170px 0 / 170px 100% no-repeat,
+    var(--fp-line);
+  animation: fp-progress 1.4s ease-in-out infinite;
+}
+
+@keyframes fp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fp-hop {
+  0% { translate: 0 0; animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1); }
+  50% { translate: 0 -56px; animation-timing-function: cubic-bezier(0.32, 0, 0.67, 0); }
+  100% { translate: 0 0; }
+}
+@keyframes fp-squash {
+  0%, 100% { scale: 1.14 0.84; }
+  8%, 92% { scale: 1 1; }
+}
+@keyframes fp-spin { to { rotate: 360deg; } }
+@keyframes fp-shadow {
+  0% { scale: 1; opacity: 1; animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1); }
+  50% { scale: 0.45; opacity: 0.35; animation-timing-function: cubic-bezier(0.32, 0, 0.67, 0); }
+  100% { scale: 1; opacity: 1; }
+}
+@keyframes fp-grass { to { background-position: 0 calc(100% - 12px), -28px 100%; } }
+@keyframes fp-progress { to { background-position: 170px 0, 0 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="stSpinner"] > div > :first-child,
+  [data-testid="stSpinner"] > div > :first-child::after { animation: none; }
+  [data-testid="stSpinner"] > div > :first-child::before { animation: fp-spin 3s linear infinite; }
+}

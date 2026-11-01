@@ -24,7 +24,7 @@ The app runs **on your own computer**: start it there, then open http://localhos
 |---|---|
 | **Match analysis** | Pick one of the league's upcoming fixtures (or any two teams), the referee and **missing players**. You see expected goals, win/draw/loss, a likely-score grid, form and H2H. Each market shows the model's fair odds, the **Bet at odds** range and the bookmaker average; type SportyBet's odds and value bets appear with a stake, **Log bet** and **Add to slip** |
 | **Fixtures** | Loads itself: every match in the chosen competitions for today or the next 2–7 days, fetched online, with probabilities, bookmaker average odds and value bets at those odds. Pick any match for the full breakdown. Uploading your own CSV with SportyBet odds still works underneath |
-| **Bet of the day** | An accumulator near your target odds (default 10) from all 16 leagues, built for the highest chance of winning, with one click to a SportyBet booking code. See [Bet of the day](#bet-of-the-day) |
+| **Bet of the day** | An accumulator near your target odds (default 10) from all 16 leagues, built for the highest chance of winning, with one click to a SportyBet booking code. **Mega odds** builds one big ticket (1,000+ odds) from up to two weeks of matches. See [Bet of the day](#bet-of-the-day) |
 | **Results** | Pick a day: every finished match with the model's call, the bookmaker favourite, the top pick and the value bets graded against the final score (ESPN), plus how many wins the model expected. Predictions are rebuilt from data before that day, so the model never sees the scores. Same from the command line: `python -m predictor review --date 2026-10-31` |
 | **Bet slip** | Your picks, singles vs. accumulator maths and warnings. **Get SportyBet booking code** books the slip on SportyBet and gives you the code; a copy list under SportyBet's market names is the fallback |
 | **Bet tracker** | Every logged bet: set won/lost, add closing odds, see profit, ROI, hit rate, closing-line value and a profit chart |
@@ -275,6 +275,15 @@ Pick the day and how likely each leg must be (default 65%). Every leg must be ra
 
 - **Best from all leagues** (default 10 odds): the best ticket, plus a 2nd and 3rd best that use different matches.
 - **One per league** (default 3 odds, since a league usually has only a few matches a day): the best ticket within each league. Leagues that can't reach the target that day are listed as "no solid bet today". A typical 3-odds league ticket wins about 1 time in 3.5.
+- **Mega odds** (switch at the top of the tab): one ticket of hundreds or thousands of odds from up to 14 days of matches, up to 40 legs, plus two alternatives that use different matches. SportyBet lists matches about a week ahead, so in practice that's the window. Same rules per leg and the same search. On 1 November 2026 (195 matches over the next week) it found:
+
+  | Total odds | Legs | Chance it wins | Back per ₦100 on average |
+  |---|---|---|---|
+  | 1,000 | 21 | 1 in 2,260 | ₦44 |
+  | 3,000 | 24 | 1 in 7,800 | ₦38 |
+  | 10,000 | 28 | 1 in 31,000 | ₦32 |
+
+  No choice of legs changes the basic maths: even at perfectly fair prices a 3,000-odds ticket wins 1 time in 3,000, and every leg's margin makes it rarer. The builder only finds the least-bad ticket for the odds you ask for. It's a lottery ticket, so stake accordingly.
 
 Three things to know:
 

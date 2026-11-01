@@ -12,6 +12,11 @@ every market, and blending the model in made them worse. Because each leg
 carries the bookmaker's margin, a few well-priced legs beat many very short
 ones at the same total odds, and by the bookmaker's own prices every
 accumulator loses money on average.
+
+The same search builds multi-day "mega" tickets (thousands of odds, up to
+MEGA_MAX_LEGS legs). No choice of legs makes those likely: even at perfectly
+fair prices a 3,000-odds ticket wins 1 time in 3,000, and every leg's margin
+makes it rarer. The search finds the least-bad combination for the odds.
 """
 from __future__ import annotations
 
@@ -25,9 +30,11 @@ from . import picks, safety, sportybet
 LEG_MARKETS = picks.PICK_MARKETS
 LEAGUE_TARGET = 3.0     # one league has ~3 matches a day: 10 odds is rarely reachable
 OVERSHOOT = 1.35        # total odds may land up to 35% above the target
-MAX_LEGS = 12
+MAX_LEGS = 20
+MEGA_MAX_LEGS = 40      # multi-day "mega" tickets
 MIN_LEG_ODDS = 1.10     # shorter legs add almost nothing but another margin
 STEP = 0.002            # resolution of the search, in log-odds
+MAX_COLUMNS = 2500      # big targets use a coarser step so the search stays small
 
 
 @dataclass
@@ -73,15 +80,18 @@ def build(legs: list[Leg], target: float, max_legs: int = MAX_LEGS) -> list[Leg]
     for leg in legs:
         groups.setdefault(leg.match, []).append(leg)
     groups_list = list(groups.values())
-    lo, hi = math.ceil(math.log(target) / STEP), int(math.log(target * OVERSHOOT) / STEP)
+    step = max(STEP, math.log(target * OVERSHOOT) / MAX_COLUMNS)
+    # On the coarse step, rounding each leg down guarantees the real total reaches the target.
+    snap = math.floor if step > STEP else round
+    lo, hi = math.ceil(math.log(target) / step), int(math.log(target * OVERSHOOT) / step)
     dp = np.full((max_legs + 1, hi + 1), np.inf)
     dp[0, 0] = 0.0
     choices = []
     for group in groups_list:
         new = dp.copy()
-        choice = np.full(dp.shape, -1, dtype=np.int16)
+        choice = np.full(dp.shape, -1, dtype=np.int8)
         for j, leg in enumerate(group):
-            w, c = round(math.log(leg.odds) / STEP), -math.log(leg.book_prob)
+            w, c = snap(math.log(leg.odds) / step), -math.log(leg.book_prob)
             if w > hi:
                 continue
             for k in range(max_legs):
@@ -102,15 +112,23 @@ def build(legs: list[Leg], target: float, max_legs: int = MAX_LEGS) -> list[Leg]
         if j >= 0:
             leg = group[j]
             chosen.append(leg)
-            k, w = k - 1, w - round(math.log(leg.odds) / STEP)
+            k, w = k - 1, w - snap(math.log(leg.odds) / step)
     return sorted(chosen, key=lambda leg: leg.result["fx"]["kickoff"])
 
 
-def alternatives(legs: list[Leg], target: float, n: int = 3) -> list[list[Leg]]:
+def reach(legs: list[Leg], max_legs: int = MAX_LEGS) -> float:
+    """The highest total odds these legs can make (one leg per match)."""
+    longest: dict[str, float] = {}
+    for leg in legs:
+        longest[leg.match] = max(longest.get(leg.match, 0.0), leg.odds)
+    return math.prod(sorted(longest.values(), reverse=True)[:max_legs]) if longest else 1.0
+
+
+def alternatives(legs: list[Leg], target: float, n: int = 3, max_legs: int = MAX_LEGS) -> list[list[Leg]]:
     """The best ticket, then the best from the matches left, up to n: no two share a match."""
     tickets, pool = [], list(legs)
     while len(tickets) < n:
-        ticket = build(pool, target)
+        ticket = build(pool, target, max_legs)
         if not ticket:
             break
         tickets.append(ticket)

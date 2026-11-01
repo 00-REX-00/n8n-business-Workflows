@@ -21,6 +21,8 @@ Betting model for European football: Dixon-Coles team ratings (goals + shots on 
 - `predictor/ratings.py` Dixon-Coles fit, `model.py` league model, `calibration.py`, `markets.py`
 - `predictor/value.py` edges/stakes, `safety.py` play-safe filter, `slip.py` bet slips, `tracker.py` bet log
 - `predictor/consensus.py` bookmaker-vs-market test and its decision rule (`promising`); `snapshot.py` SportyBet odds log
+- `assets/loader.css` restyles every Streamlit spinner into the full-screen bouncing-football loading screen (selectors match Streamlit 1.66's spinner markup; recheck after upgrading Streamlit)
+- SportyBet's feed sends at most 10 events per page: `sportybet.events` pages by `PAGE_SIZE = 10`
 - `data/` is a local cache and the user's bets/settings (git-ignored; never commit it)
 
 ## Server (deploy/)

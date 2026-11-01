@@ -39,6 +39,10 @@ MARKETS = {
        for side, oid in (("over", "12"), ("under", "13"))},
 }
 _BY_ID = {v: k for k, v in MARKETS.items()}
+# The feed sends at most 10 events per page whatever pageSize asks for, but
+# pages by the requested size, so asking for more silently skips events.
+PAGE_SIZE = 10
+MAX_PAGES = 30
 
 
 def implied_probs(odds: dict[str, float]) -> dict[str, float]:
@@ -104,11 +108,12 @@ def events(league: str, known: list[str], keep_unknown: bool = False) -> pd.Data
         return pd.DataFrame()
     market_ids = ",".join(sorted({m for m, _, _ in MARKETS.values()}, key=int))
     frames, page = [], 1
-    while True:
-        data = _call("factsCenter/pcUpcomingEvents", sportId="sr:sport:1", marketId=market_ids, pageSize=100,
-                     pageNum=page, option=1, tournamentId=f"sr:tournament:{TOURNAMENTS[league]}")
+    while page <= MAX_PAGES:
+        data = _call("factsCenter/pcUpcomingEvents", sportId="sr:sport:1", marketId=market_ids,
+                     pageSize=PAGE_SIZE, pageNum=page, option=1,
+                     tournamentId=f"sr:tournament:{TOURNAMENTS[league]}")
         frames.append(parse_events(data.get("tournaments", []), league, known, keep_unknown))
-        if page * 100 >= data.get("totalNum", 0):
+        if page * PAGE_SIZE >= (data.get("totalNum") or 0):
             break
         page += 1
     frames = [f for f in frames if not f.empty]
@@ -141,6 +146,24 @@ def merge_odds(fx: pd.DataFrame, sb: pd.DataFrame) -> pd.DataFrame:
         fx.at[i, "odds_source"] = "SportyBet"
         fx.at[i, "event_id"] = s["event_id"]
     return fx
+
+
+def add_unlisted(fx: pd.DataFrame, sb: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    """Add SportyBet events kicking off in [start, end) that the fixture sources
+    don't list yet (football-data posts only a few days ahead, Understat covers
+    only the top 5), so a ticket can use every match SportyBet prices."""
+    if sb.empty:
+        return fx
+    sb = sb[sb["home"].notna() & sb["away"].notna() & (sb["kickoff"] >= start) & (sb["kickoff"] < end)]
+    listed = set(zip(fx["league"], fx["home"], fx["away"])) if not fx.empty else set()
+    extra = sb[[k not in listed for k in zip(sb["league"], sb["home"], sb["away"])]]
+    extra = extra.drop_duplicates(["league", "home", "away"])
+    if extra.empty:
+        return fx
+    extra = extra.drop(columns=["sb_home", "sb_away"], errors="ignore").assign(
+        date=extra["kickoff"].dt.normalize(), referee=None, source="SportyBet", odds_source="SportyBet")
+    out = pd.concat([fx, extra], ignore_index=True)
+    return out.sort_values(["kickoff", "league", "home"]).reset_index(drop=True)
 
 
 def selection(event_id: str, market: str) -> dict:
