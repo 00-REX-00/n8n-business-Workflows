@@ -9,6 +9,7 @@ Everything is cached in data/raw.
 """
 from __future__ import annotations
 
+import functools
 import gzip
 import io
 import json
@@ -34,13 +35,20 @@ PLAYERS_MIRROR_URL = ("https://raw.githubusercontent.com/vibedatascience/underst
 # ---------------------------------------------------------------- understat.com
 
 # One league season's reply feeds xG, player shares and the fixture list, often
-# within the same minute, so it is kept in memory for a while.
+# within the same minute, so it is kept in memory for a while. A failure is
+# remembered too: during an Understat outage, every team's player lookup would
+# otherwise retry (and wait on DNS timeouts) one after another.
 PAYLOAD_TTL_SECONDS = 3 * 3600
+FAILURE_TTL_SECONDS = 30 * 60
+PLAYERS_TTL_HOURS = 12   # this season's player totals change once a round
 _payloads: dict[tuple[str, int], tuple[float, dict]] = {}
+_failures: dict[tuple[str, int], tuple[float, str]] = {}
 
 
 def clear_cache() -> None:
     _payloads.clear()
+    _failures.clear()
+    _players_mirror.cache_clear()
 
 
 def _understat_league_json(league: str, season: int) -> dict:
@@ -48,7 +56,16 @@ def _understat_league_json(league: str, season: int) -> dict:
     hit = _payloads.get((league, season))
     if hit and time.time() - hit[0] < PAYLOAD_TTL_SECONDS:
         return hit[1]
-    payload = _fetch_understat_league_json(league, season)
+    failed = _failures.get((league, season))
+    if failed and time.time() - failed[0] < FAILURE_TTL_SECONDS:
+        raise RuntimeError(f"Understat unavailable, not retrying for {FAILURE_TTL_SECONDS // 60} minutes "
+                           f"({failed[1]})")
+    try:
+        payload = _fetch_understat_league_json(league, season)
+    except Exception as exc:
+        _failures[(league, season)] = (time.time(), str(exc))
+        raise
+    _failures.pop((league, season), None)
     _payloads[(league, season)] = (time.time(), payload)
     return payload
 
@@ -229,26 +246,37 @@ def add_recent_results(matches: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["date", "league", "home"]).reset_index(drop=True)
 
 
+@functools.lru_cache(maxsize=1)
+def _players_mirror() -> pd.DataFrame:
+    """The GitHub copy of every Understat season's player totals (large): fetched once per run."""
+    return pd.read_csv(io.BytesIO(_download(PLAYERS_MIRROR_URL)))
+
+
 def load_players(league: str, season: int, fd_teams: list[str], cache_dir: Path = DEFAULT_CACHE) -> pd.DataFrame:
-    """Season player totals: team, player, minutes, npxG, xA (Understat)."""
+    """Season player totals: team, player, minutes, npxG, xA (Understat).
+
+    Called once per team, so the saved copy is used while fresh (past seasons
+    always, this season for PLAYERS_TTL_HOURS) and, if Understat is down, the
+    last saved copy beats the large mirror download."""
     cache = cache_dir / f"players_{league}_{season}.csv"
-    if cache.exists() and season != current_season():
+    if cache.exists() and (season != current_season()
+                           or time.time() - cache.stat().st_mtime < PLAYERS_TTL_HOURS * 3600):
         return pd.read_csv(cache)
     try:
         _, raw = _from_understat(league, season)
         raw = raw.rename(columns={"team_title": "team"})
     except Exception:
         raw = pd.DataFrame()
+    if raw.empty and cache.exists():
+        return pd.read_csv(cache)
     if raw.empty:
         try:
-            mirror = pd.read_csv(io.BytesIO(_download(PLAYERS_MIRROR_URL)))
+            mirror = _players_mirror()
             raw = mirror[(mirror["league"] == PLAYERS_MIRROR_LEAGUES[league]) & (mirror["year"] == season)]
             raw = raw.rename(columns={"team_title": "team"})
         except Exception:
             raw = pd.DataFrame()
     if raw.empty:
-        if cache.exists():
-            return pd.read_csv(cache)
         return pd.DataFrame(columns=["team", "player", "minutes", "games", "npxG", "xA"])
 
     df = pd.DataFrame({

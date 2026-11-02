@@ -10,10 +10,12 @@ SportyBet publishes its own probability for every outcome, so odds x
 probability is its own expected return on that leg, and 1 minus it is the
 margin it keeps (about 2% on a big match result, 4-5% on many goal lines). At
 a given total odds the only ways to raise the chance are to pay less margin
-or to find legs SportyBet has priced wrongly. `improve` does the first: it
-keeps the legs you choose and rebuilds the rest for the highest chance at your
-total odds, from legs that also pass the model and play-safe checks
-(acca.candidates). It can't make a ticket likely, only less unlikely.
+or to find legs SportyBet has priced wrongly. Both fixes below do the first,
+from legs that also pass the model and play-safe checks (acca.candidates):
+`swap` replaces each leg you untick with the best-priced leg at similar odds
+(the total odds come out close to the original and are simply recalculated),
+and `improve` rebuilds everything you untick for the highest chance at a
+total odds you choose. Neither can make a ticket likely, only less unlikely.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from . import acca
 
 EXPENSIVE_MARGIN = 0.04   # a leg keeping >= 4% (and more than the slip's median) is flagged
 DISAGREE = 0.10           # model at least 10 points below SportyBet's probability
+SWAP_RANGE = 1.25         # a swap's odds stay within 25% of the leg it replaces, when possible
 
 
 def leg_prob(leg: dict) -> float:
@@ -97,3 +100,26 @@ def improve(legs: list[dict], keep: list[bool], pool: list[acca.Leg], target: fl
     free = [leg for leg in pool if leg.result["fx"].get("event_id") not in used]
     fill = acca.build(free, target / kept_odds, max_legs - len(kept), strict=True)
     return (kept, fill) if fill else None
+
+
+def swap(legs: list[dict], keep: list[bool], pool: list[acca.Leg]) -> tuple[list[dict], list[tuple[dict, acca.Leg | None]]]:
+    """(kept legs, [(replaced leg, its swap or None)]): every unticked leg is
+    replaced one for one by the pool leg SportyBet prices best (highest odds x
+    probability) within SWAP_RANGE of its odds, or the closest odds if none is
+    that near. A match is never used twice. None means no swap was left: the
+    caller keeps the original leg rather than shrink the ticket. The total odds
+    are whatever the legs add up to."""
+    kept = [leg for leg, k in zip(legs, keep) if k]
+    used = {leg["event_id"] for leg in kept}
+    swaps = []
+    for leg in sorted((leg for leg, k in zip(legs, keep) if not k), key=lambda leg: -leg["odds"]):
+        free = [p for p in pool if p.result["fx"].get("event_id") not in used]
+        near = [p for p in free if leg["odds"] / SWAP_RANGE <= p.odds <= leg["odds"] * SWAP_RANGE]
+        if near:
+            best = max(near, key=lambda p: (p.odds * p.book_prob, p.book_prob))
+        else:
+            best = min(free, key=lambda p: abs(math.log(p.odds / leg["odds"])), default=None)
+        if best is not None:
+            used.add(best.result["fx"].get("event_id"))
+        swaps.append((leg, best))
+    return kept, swaps

@@ -76,6 +76,11 @@ def _cached_json(cache: Path, fetch) -> object:
 def _api_football(league: str, season: int, day: str, key: str) -> list[dict]:
     # Refusals are cached like answers, so a plan that can't see this season
     # (the free plan only covers 2022-2024) isn't asked again for every fixture.
+    # A plan refusal covers every league and day, so it's remembered per season.
+    refused = DEFAULT_CACHE / f"news_apif_refused_{season}.json"
+    if refused.exists() and time.time() - refused.stat().st_mtime < NEWS_TTL_HOURS * 3600:
+        raise RuntimeError(json.loads(refused.read_text())["message"])
+
     def fetch():
         req = urllib.request.Request(
             API_FOOTBALL_URL.format(league=API_FOOTBALL_LEAGUES[league], season=season, date=day),
@@ -86,7 +91,10 @@ def _api_football(league: str, season: int, day: str, key: str) -> list[dict]:
     payload = _cached_json(DEFAULT_CACHE / f"news_apif_{league}_{day}.json", fetch)
     if payload.get("errors"):
         errors = payload["errors"]
-        raise RuntimeError("; ".join(map(str, errors.values())) if isinstance(errors, dict) else str(errors))
+        message = "; ".join(map(str, errors.values())) if isinstance(errors, dict) else str(errors)
+        if isinstance(errors, dict) and "plan" in errors:
+            refused.write_text(json.dumps({"message": message}))
+        raise RuntimeError(message)
     return payload["response"]
 
 

@@ -302,7 +302,10 @@ SportyBet publishes its own probability for every outcome. They add up to exactl
 
 On every leg, odds × probability is below 1: SportyBet keeps the rest. That's about 2% on a big match result, but 4–5% on many goal lines. At a given total odds there are only two ways to raise the chance:
 
-1. **Pay less margin:** pick legs where odds × probability is close to 1. The **Check a code** tab does this: it keeps the legs you tick and rebuilds the rest (from legs that SportyBet and the model both rate likely enough and that pass the play-safe rules) for the highest chance at your total odds. On a big ticket that can nearly double the chance, but it still returns less than you stake on average.
+1. **Pay less margin:** pick legs where odds × probability is close to 1. The **Check a code** tab does this with the legs you untick. New legs come only from legs that SportyBet and the model both rate likely enough and that pass the play-safe rules. Either way it still returns less than you stake on average.
+   - **Swap each one (default):** each unticked leg is replaced by the leg SportyBet prices best within 25% of its odds (or the closest odds if none is that near). The total odds come out close to the original and are simply recalculated. A leg with no replacement left is dropped.
+   - **Rebuild for a total odds:** keeps your ticked legs and fills the rest for the highest chance at the total odds you choose. If that can't be reached, it falls back to swapping.
+   - **Replace every leg:** applies the chosen method to the whole ticket.
 2. **Find legs SportyBet has priced wrongly**, where the true chance is higher than its probability. That's the only route to profit, and the [odds log](#odds-log) is collecting the data to look for it. A leg where SportyBet's own numbers give odds × probability above 1 is marked "Value by SportyBet's own numbers".
 
 A high win rate on its own just means short odds. No model makes a 1,000-odds ticket likelier than about 1 in 1,000.

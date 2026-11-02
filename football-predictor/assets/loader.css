@@ -1,10 +1,20 @@
-/* Loading screen. Every Streamlit spinner (st.spinner and the messages of cached
-   functions such as "Analysing fixtures…") becomes a full-screen overlay: a
-   football bouncing on a strip of pitch, the current step underneath and a
-   sliding progress bar. Streamlit 1.66 spinner markup:
-   [data-testid=stSpinner] > div > (icon wrapper, div > [role=status] + time). */
+/* Loading screen: a football bouncing on a strip of pitch, a message and a
+   sliding progress bar, over the dimmed page.
 
-[data-testid="stSpinner"] {
+   Two layers, same look:
+   - .fp-loader (markup injected at the top of app.py, outside the tabs) shows
+     whenever Streamlit is running the script or reconnecting, i.e. while its
+     header shows the running icon or the connection badge. It appears after
+     0.8 s so quick clicks don't flash it, and it draws the dimmed backdrop.
+     It's needed because a spinner inside a tab you aren't looking at is
+     hidden along with that tab.
+   - Every Streamlit spinner (st.spinner and cached functions' messages such as
+     "Analysing fixtures…") becomes the same card, centred on top, so you see
+     the current step. Streamlit 1.66 spinner markup:
+     [data-testid=stSpinner] > div > (icon wrapper, div > [role=status] + time). */
+
+[data-testid="stSpinner"],
+.fp-loader {
   --fp-card: #141924;
   --fp-line: rgba(255, 255, 255, 0.09);
   --fp-text: #f3f5fa;
@@ -21,13 +31,34 @@
   justify-content: center !important;
   margin: 0 !important;
   padding: 16px !important;
-  background: rgba(8, 10, 16, 0.55) !important;
-  backdrop-filter: blur(3px);
   animation: fp-fade 0.2s ease-out;
+}
+.fp-loader {
+  display: none !important;
+  background: rgba(8, 10, 16, 0.6);
+  backdrop-filter: blur(3px);
+}
+[data-testid="stApp"]:has([data-testid="stStatusWidgetRunningIcon"]) .fp-loader,
+[data-testid="stApp"]:has([data-testid="stConnectionStatus"]) .fp-loader {
+  display: flex !important;
+  animation: fp-show 0.25s ease-out 0.8s both;
+}
+/* Streamlit gives a spinner's container z-index 101, which would trap its card
+   under the page-wide loader: lift it above. */
+[data-testid="stElementContainer"]:has(> [data-testid="stSpinner"]) {
+  z-index: 999995 !important;
+}
+/* While a spinner you can see (in the open tab, or outside the tabs) shows the
+   current step, the page-wide loader keeps only its backdrop. Hidden tabs are inert. */
+[data-testid="stApp"]:has([data-testid="stTabPanel"]:not([inert]) [data-testid="stSpinner"]) .fp-loader .fp-card,
+[data-testid="stApp"]:has([data-testid="stSpinner"]:not([data-testid="stTabPanel"] [data-testid="stSpinner"])) .fp-loader .fp-card {
+  visibility: hidden;
 }
 
 /* the card */
-[data-testid="stSpinner"] > div {
+[data-testid="stSpinner"] > div,
+.fp-loader .fp-card {
+  display: flex;
   flex-direction: column !important;
   align-items: center !important;
   width: auto !important;
@@ -43,7 +74,8 @@
 }
 
 /* the stage: icon wrapper turned into a little pitch with the ball and its shadow */
-[data-testid="stSpinner"] > div > :first-child {
+[data-testid="stSpinner"] > div > :first-child,
+.fp-loader .fp-stage {
   position: relative;
   display: block !important;
   width: 180px !important;
@@ -60,7 +92,8 @@
   display: none !important;
 }
 /* the ball: squashed on landing, spinning, decelerating up and accelerating down */
-[data-testid="stSpinner"] > div > :first-child::before {
+[data-testid="stSpinner"] > div > :first-child::before,
+.fp-loader .fp-stage::before {
   content: "";
   position: absolute;
   left: 50%;
@@ -74,7 +107,8 @@
     fp-squash 0.9s linear infinite,
     fp-spin 1.6s linear infinite;
 }
-[data-testid="stSpinner"] > div > :first-child::after {
+[data-testid="stSpinner"] > div > :first-child::after,
+.fp-loader .fp-stage::after {
   content: "";
   position: absolute;
   left: 50%;
@@ -93,7 +127,8 @@
   align-items: center !important;
   gap: 2px !important;
 }
-[data-testid="stSpinner"] [role="status"] p {
+[data-testid="stSpinner"] [role="status"] p,
+.fp-loader .fp-msg {
   margin: 0;
   color: var(--fp-text);
   font-size: 1.02rem;
@@ -105,7 +140,8 @@
 }
 
 /* indeterminate progress bar */
-[data-testid="stSpinner"] > div::after {
+[data-testid="stSpinner"] > div::after,
+.fp-loader .fp-bar {
   content: "";
   width: 170px;
   height: 3px;
@@ -117,6 +153,7 @@
 }
 
 @keyframes fp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fp-show { from { opacity: 0; visibility: hidden; } to { opacity: 1; visibility: visible; } }
 @keyframes fp-hop {
   0% { translate: 0 0; animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1); }
   50% { translate: 0 -56px; animation-timing-function: cubic-bezier(0.32, 0, 0.67, 0); }
@@ -137,6 +174,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   [data-testid="stSpinner"] > div > :first-child,
-  [data-testid="stSpinner"] > div > :first-child::after { animation: none; }
-  [data-testid="stSpinner"] > div > :first-child::before { animation: fp-spin 3s linear infinite; }
+  [data-testid="stSpinner"] > div > :first-child::after,
+  .fp-loader .fp-stage,
+  .fp-loader .fp-stage::after { animation: none; }
+  [data-testid="stSpinner"] > div > :first-child::before,
+  .fp-loader .fp-stage::before { animation: fp-spin 3s linear infinite; }
 }

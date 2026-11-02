@@ -630,6 +630,24 @@ class CheckCodeTest(unittest.TestCase):
         self.assertEqual(doctor.improve(legs, [True, True, False, False], pool, 3.0)[1], [])  # kept already reach it
         self.assertIsNone(doctor.improve(legs, [True, False, False, False], pool[:1], 50.0))
 
+    def test_swap_one_for_one(self):
+        from predictor import acca, doctor, sportybet
+        legs, _ = sportybet.parse_code(self.code(), self.known)   # odds 2.0, 1.8, 1.5, 3.0
+
+        def pool_leg(eid, odds, q):
+            return acca.Leg({"home": eid, "away": "Z", "league": "E0", "fx": {"kickoff": pd.Timestamp("2026-11-02"),
+                                                                                "event_id": eid}}, "1", odds, q, q)
+        pool = [pool_leg("p1", 1.55, 0.63),    # near 1.5, o*p 0.977
+                pool_leg("p2", 1.45, 0.67),    # near 1.5, o*p 0.972
+                pool_leg("p3", 1.75, 0.56),    # near 1.8, o*p 0.98
+                pool_leg("e1", 1.8, 0.56)]     # the kept leg's match: never used
+        kept, swaps = doctor.swap(legs, [True, False, False, True], pool)
+        self.assertEqual([leg["event_id"] for leg in kept], ["e1", "e1"])
+        got = {old["odds"]: (new.result["fx"]["event_id"] if new else None) for old, new in swaps}
+        self.assertEqual(got, {1.8: "p3", 1.5: "p1"})         # best-priced within 25% of each, no reuse
+        kept, swaps = doctor.swap(legs, [False, False, False, False], pool[:1])
+        self.assertEqual(sum(new is None for _, new in swaps), 3)   # one swap left: the others are dropped
+
     def test_strict_build_never_lands_below_the_target(self):
         import math
         from predictor import acca
@@ -653,6 +671,65 @@ class CheckCodeTest(unittest.TestCase):
         got = {leg.market: leg.book_prob for leg in acca.candidates([r], 0.30)}
         self.assertEqual(got["1"], 0.36)                                          # SportyBet's own, not from odds
         self.assertAlmostEqual(got["2"], sportybet.implied_probs(r["odds"])["2"])  # no probability: falls back
+
+
+class OutageTest(unittest.TestCase):
+    def test_understat_failure_is_remembered(self):
+        from unittest import mock
+        from predictor import xg
+        xg.clear_cache()
+        calls = []
+
+        def down(league, season):
+            calls.append(league)
+            raise OSError("Temporary failure in name resolution")
+        with mock.patch.object(xg, "_fetch_understat_league_json", down):
+            for _ in range(3):
+                with self.assertRaises(Exception):
+                    xg._understat_league_json("E0", 2026)
+            self.assertEqual(calls, ["E0"])                    # one try, not one per team
+            xg.clear_cache()                                   # Refresh data retries at once
+            with self.assertRaises(Exception):
+                xg._understat_league_json("E0", 2026)
+            self.assertEqual(calls, ["E0", "E0"])
+        xg.clear_cache()
+
+    def test_players_use_the_saved_copy(self):
+        import os
+        import tempfile
+        import time
+        from pathlib import Path
+        from unittest import mock
+        from predictor import xg
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = pd.DataFrame({"team": ["Arsenal"], "player": ["Saka"], "minutes": [900], "games": [10],
+                                  "npxG": [3.1], "xA": [2.0]})
+            path = Path(tmp) / "players_E0_2026.csv"
+            saved.to_csv(path, index=False)
+            boom = mock.Mock(side_effect=OSError("down"))
+            with mock.patch.object(xg, "current_season", return_value=2026), \
+                    mock.patch.object(xg, "_from_understat", boom), mock.patch.object(xg, "_players_mirror", boom):
+                self.assertEqual(xg.load_players("E0", 2026, ["Arsenal"], Path(tmp))["player"].tolist(), ["Saka"])
+                boom.assert_not_called()                       # fresh: no download at all
+                old = time.time() - (xg.PLAYERS_TTL_HOURS + 1) * 3600
+                os.utime(path, (old, old))
+                self.assertEqual(xg.load_players("E0", 2026, ["Arsenal"], Path(tmp))["player"].tolist(), ["Saka"])
+                self.assertEqual(boom.call_count, 1)           # Understat tried; the mirror wasn't needed
+
+    def test_api_football_plan_refusal_covers_the_season(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from predictor import news
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(news, "DEFAULT_CACHE", Path(tmp)):
+            refusal = {"errors": {"plan": "Free plans do not have access to this season"}, "response": []}
+            with mock.patch.object(news, "_cached_json", return_value=refusal) as cached:
+                with self.assertRaises(RuntimeError):
+                    news._api_football("SP1", 2026, "2026-11-02", "key")
+                with self.assertRaises(RuntimeError) as err:
+                    news._api_football("I1", 2026, "2026-11-07", "key")   # another league and day
+                self.assertEqual(cached.call_count, 1)
+                self.assertIn("Free plans", str(err.exception))
 
 
 class ConsensusTest(unittest.TestCase):

@@ -8,16 +8,26 @@ import re
 from datetime import date, timedelta
 from pathlib import Path
 
-import altair as alt
-import numpy as np
-import pandas as pd
 import streamlit as st
 
-from predictor import (absences, acca, backtest, calibration, data, doctor, fixtures, history, markets, news,
-                       picks, predict, review, safety, slip, sportybet, tracker, value, xg)
-from predictor.model import LeagueModel
-
+# Page setup and the loading screen (assets/loader.css) come before the heavy imports below (pandas,
+# SciPy, altair: about 10 s on a fresh start), so the first visitor sees the loader, not a blank page.
+# The page-wide loader shows whenever the app is busy, in any tab; every spinner becomes the same
+# bouncing-football card on top of it with the current step.
 ROOT = Path(__file__).resolve().parent
+st.set_page_config(page_title="Football Predictor", page_icon="⚽", layout="wide")
+st.markdown(f"<style>{(ROOT / 'assets' / 'loader.css').read_text(encoding='utf-8')}</style>"
+            '<div class="fp-loader" aria-hidden="true"><div class="fp-card"><div class="fp-stage"></div>'
+            '<p class="fp-msg">Working on it…</p><div class="fp-bar"></div></div></div>',
+            unsafe_allow_html=True)
+
+import altair as alt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from predictor import (absences, acca, backtest, calibration, data, doctor, fixtures, history,  # noqa: E402
+                       markets, news, picks, predict, review, safety, slip, sportybet, tracker, value, xg)
+from predictor.model import LeagueModel  # noqa: E402
 BACKTEST_CSV = ROOT / "output" / "backtest.csv"
 # On the server (deploy/): friends log in through nginx, which passes the login
 # name in X-Remote-User. Shared mode hides everything that changes the model or
@@ -51,10 +61,6 @@ ODDS_MARKETS = [
     "corners_over_9.5", "corners_under_9.5",
 ]
 
-st.set_page_config(page_title="Football Predictor", page_icon="⚽", layout="wide")
-# Loading screen: turns every spinner into a full-screen bouncing-football overlay.
-st.markdown(f"<style>{(ROOT / 'assets' / 'loader.css').read_text(encoding='utf-8')}</style>",
-            unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- data/model
@@ -136,7 +142,8 @@ def analyse_upcoming(leagues: tuple[str, ...], days: int, today: date, refresh_t
         fx = fx[fx["odds_source"] == "SportyBet"]
     if fx.empty:
         return [], notes
-    results, warnings = predict.analyse(predict.normalise_fixtures(fx), matches)
+    models = {lg: league_model(lg, today, refresh_token) for lg in sorted(set(fx["league"]))}   # fitted once, shared
+    results, warnings = predict.analyse(predict.normalise_fixtures(fx), matches, models)
     return results, notes + warnings
 
 
@@ -387,6 +394,7 @@ def show_ticket(ticket: list[acca.Leg], key: str) -> None:
             r = leg.result
             add_to_slip(slip.Leg(str(r["fx"]["date"].date()), r["league"], r["home"], r["away"],
                                  leg.market, leg.odds, leg.model_prob))
+        st.rerun()   # this runs inside a fragment: rerun the whole app so the Bet slip tab shows them
     booked = bookings.get(key)
     if booked and booked[0] == sig:
         code = booked[1]
@@ -812,7 +820,9 @@ with tab_list:
 
 # ---------------------------------------------------------------- bet of the day
 
-with tab_botd:
+@st.fragment
+def bet_of_the_day_tab() -> None:
+    """A fragment: changing a setting here reruns only this tab, not the whole app."""
     st.subheader("Bet of the day")
     botd_mode = st.radio("Ticket type", ["Daily", "Mega odds"], horizontal=True, key="botd_mode",
                          captions=["Today or tomorrow", f"Big odds from up to {MEGA_DAYS} days of matches"])
@@ -919,12 +929,19 @@ with tab_botd:
         st.caption(note)
 
 
+with tab_botd:
+    bet_of_the_day_tab()
+
+
 # ---------------------------------------------------------------- check a code
 
-with tab_code:
+@st.fragment
+def check_code_tab() -> None:
+    """A fragment: clicks and edits inside it rerun only this tab, not the whole app."""
     st.subheader("Check a booking code")
     st.caption("Paste any SportyBet booking code. The app reads its legs (no login), shows what SportyBet keeps on "
-               "each one and flags the weak ones, then rebuilds the ticket for the highest chance at your total odds.")
+               "each one and flags the weak ones. Untick the legs you don't want and it swaps them for better-priced "
+               "legs at similar odds, then rebooks the ticket.")
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
     code_in = c1.text_input("SportyBet booking code", key="code_input", placeholder="e.g. NMNQPY")
     if c2.button("Load", type="primary", key="code_load") and code_in.strip():
@@ -979,41 +996,59 @@ with tab_code:
                 "Model chance": st.column_config.NumberColumn(format="percent")})
         code_keep = edited["Keep"].tolist()
 
-        st.markdown("#### Improved ticket")
+        st.markdown("#### Fix the ticket")
+        code_mode = st.radio("How to fix the unticked legs", ["Swap", "Rebuild"], horizontal=True, key="code_mode",
+                             format_func=lambda m: {"Swap": "Swap each one", "Rebuild": "Rebuild for a total odds"}[m],
+                             captions=["A better-priced leg at similar odds; the total odds are recalculated",
+                                       "The highest chance at the total odds you choose"])
         i1, i2, i3 = st.columns(3)
-        code_target = i1.number_input("Total odds to aim for", min_value=1.1, max_value=100_000.0,
-                                      value=float(round(before["odds"], 2)), key=f"code_target::{code}")
-        code_min = i2.slider("Each new leg at least", 0.50, 0.85, 0.65, 0.05, format="%.2f", key="code_min",
+        code_min = i1.slider("Each new leg at least", 0.50, 0.85, 0.65, 0.05, format="%.2f", key="code_min",
                              help="Minimum chance per new leg, by both SportyBet's probabilities and the model")
         code_today = date.today()
         code_last = max(max(leg["kickoff"] for leg in code_legs).date(), code_today)
-        code_until = i3.date_input("New legs from matches up to",
+        code_until = i2.date_input("New legs from matches up to",
                                    value=min(code_last, code_today + timedelta(days=MEGA_DAYS)),
                                    min_value=code_today, max_value=code_today + timedelta(days=MEGA_DAYS),
                                    key=f"code_until::{code}",
                                    help="The code's last kick-off by default, so the new ticket settles no later")
-        if st.toggle("Replace every leg: the best ticket at these odds", key=f"code_fresh::{code}",
-                     help="Ignore the Keep column and rebuild the whole ticket from the matches below"):
+        code_target = None
+        if code_mode == "Rebuild":
+            code_target = i3.number_input("Total odds to aim for", min_value=1.1, max_value=100_000.0,
+                                          value=float(round(before["odds"], 2)), key=f"code_target::{code}")
+        if st.toggle("Replace every leg", key=f"code_fresh::{code}",
+                     help="Ignore the Keep column and replace the whole ticket"):
             code_keep = [False] * len(code_legs)
         code_now = pd.Timestamp.now()
         code_window = [r for r in code_all
                        if code_now < r["fx"]["kickoff"] < pd.Timestamp(code_until) + pd.Timedelta(days=1)]
         code_pool = acca.candidates(code_window, code_min, code_news)
-        st.caption("Improving means the highest chance at your total odds, by SportyBet's own probabilities: the legs "
-                   "you keep stay, and the rest is rebuilt from legs that SportyBet and the model both rate at least "
-                   "that likely and that pass the play-safe rules. Every leg still carries a margin, so the ticket "
-                   "returns less than you stake on average unless a leg is genuinely mispriced.")
-        improved = doctor.improve(code_legs, code_keep, code_pool, code_target)
-        if improved is None:
-            room = acca.reach(code_pool, max(acca.MEGA_MAX_LEGS - sum(code_keep), 0))
-            st.warning(f"No ticket reaches {code_target:,.0f} odds from the legs you kept plus these matches (new legs "
-                       f"can add about ×{room:,.0f} at most). Lower the total odds or the per-leg minimum, keep more "
-                       "legs, allow later matches" + ("" if code_news else ", or tick the team-news box") + ".")
-        else:
+        if all(code_keep):
+            st.info("Every leg is ticked, so there's nothing to replace. Untick the legs you don't want, or switch on "
+                    "**Replace every leg**.")
+        replaces: dict[int, dict] = {}   # id(new leg) -> the leg it replaced
+        dropped: list[dict] = []
+        improved = doctor.improve(code_legs, code_keep, code_pool, code_target) if code_target else None
+        if code_target and improved is None:
+            st.info(f"No ticket reaches {code_target:,.0f} odds from the legs you kept plus these matches, so each "
+                    "unticked leg was swapped for a better-priced one at similar odds instead.")
+        if improved is not None:
             kept, fill = improved
+        else:
+            kept, swaps = doctor.swap(code_legs, code_keep, code_pool)
+            fill = [new for _, new in swaps if new is not None]
+            replaces = {id(new): old for old, new in swaps if new is not None}
+            dropped = [old for old, new in swaps if new is None]
+            kept = kept + dropped   # no better leg left: keep the original rather than shrink the ticket
+        if dropped:
+            st.warning(f"No better leg was found for {len(dropped)} of the legs you unticked, so they stay as they were. "
+                       + ("" if code_news else "Most leagues have no free team news, so tick the team-news box above "
+                                               "to let the app use them; or ")
+                       + "lower the per-leg minimum or allow later matches to find more.")
+        if not kept and not fill:
+            st.warning("Nothing is left to book with these settings.")
+        else:
             after = doctor.summary([leg["odds"] for leg in kept] + [leg.odds for leg in fill],
-                                   [p for p, keep in zip(check["book_prob"], code_keep) if keep]
-                                   + [leg.book_prob for leg in fill])
+                                   [doctor.leg_prob(leg) for leg in kept] + [leg.book_prob for leg in fill])
             a = st.columns(4)
             a[0].metric("Total odds", f"{after['odds']:,.2f}", delta=f"{after['odds'] - before['odds']:+,.2f}",
                         delta_color="off")
@@ -1022,18 +1057,28 @@ with tab_code:
             a[2].metric("Back per ₦100, on average", f"₦{100 * after['expected_return']:.0f}",
                         delta=round(100 * (after["expected_return"] - before["expected_return"])))
             a[3].metric("Legs", f"{after['legs']}", help=f"{len(kept)} kept from the code, {len(fill)} new")
-            new_rows = [{"": "Kept", "when": leg["kickoff"], "Competition": leg["tournament"],
+            unswapped = {id(leg) for leg in dropped}
+            new_rows = [{"": "Kept (no better leg)" if id(leg) in unswapped else "Kept", "when": leg["kickoff"],
+                         "Competition": leg["tournament"],
                          "Match": f"{leg['sb_home']} v {leg['sb_away']}", "Pick": leg["label"], "Odds": leg["odds"],
-                         "SportyBet chance": doctor.leg_prob(leg)} for leg in kept]
+                         "SportyBet chance": doctor.leg_prob(leg), "Replaces": ""} for leg in kept]
             new_rows += [{"": "New", "when": leg.result["fx"]["kickoff"],
                           "Competition": data.LEAGUES.get(leg.result["league"], leg.result["league"]),
                           "Match": leg.match, "Pick": " · ".join(pick_names(leg)), "Odds": leg.odds,
-                          "SportyBet chance": leg.book_prob} for leg in fill]
+                          "SportyBet chance": leg.book_prob,
+                          "Replaces": (f"{replaces[id(leg)]['sb_home']} v {replaces[id(leg)]['sb_away']} "
+                                       f"@ {replaces[id(leg)]['odds']:.2f}" if id(leg) in replaces else "")}
+                         for leg in fill]
             new_table = pd.DataFrame(new_rows).sort_values("when")
             new_table.insert(1, "Kick-off", [f"{t:%a %d %b %H:%M}" for t in new_table["when"]])
+            if not replaces:
+                new_table = new_table.drop(columns="Replaces")
             st.dataframe(new_table.drop(columns="when"), hide_index=True, width="stretch", column_config={
                 "Odds": st.column_config.NumberColumn(format="%.2f"),
                 "SportyBet chance": st.column_config.NumberColumn(format="percent")})
+            st.caption("New legs are ones SportyBet and the model both rate at least that likely and that pass the "
+                       "play-safe rules; among those, the ones SportyBet prices best. Every leg still carries a margin, "
+                       "so the ticket returns less than you stake on average unless a leg is genuinely mispriced.")
             code_sig = (code, tuple(leg["event_id"] for leg in kept),
                         tuple((leg.result["fx"]["event_id"], leg.market) for leg in fill))
             if st.button("Get new booking code", type="primary", key="code_book"):
@@ -1057,6 +1102,10 @@ with tab_code:
                            "confirm there.")
     for note in code_notes:
         st.caption(note)
+
+
+with tab_code:
+    check_code_tab()
 
 
 # ---------------------------------------------------------------- results

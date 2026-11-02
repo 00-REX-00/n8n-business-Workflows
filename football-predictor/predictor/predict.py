@@ -50,18 +50,22 @@ def _missing(shares: pd.DataFrame, typed, from_news: list[str], team: str,
     return absences.multiplier(shares, matched), matched
 
 
-def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None) -> tuple[list[dict], list[str]]:
-    """Predict every fixture. Returns (one dict per fixture, warnings)."""
+def analyse(fixtures: pd.DataFrame, matches: pd.DataFrame | None = None,
+            models: dict[str, LeagueModel] | None = None) -> tuple[list[dict], list[str]]:
+    """Predict every fixture. Returns (one dict per fixture, warnings).
+    `models` are already-fitted league models to reuse; others are fitted here."""
     if matches is None:
         now = data.current_season()
         matches = data.load_matches(sorted(fixtures["league"].unique()), list(range(now - 3, now + 1)))
 
     results, warnings = [], []
-    models: dict[str, LeagueModel] = {}
+    models, checked = dict(models or {}), set()
     for _, fx in fixtures.iterrows():
         league = fx["league"]
         if league not in models:
             models[league] = LeagueModel.fit(matches, league, fx["date"])
+        if league not in checked:
+            checked.add(league)
             last = models[league].history["date"].max()
             if (fx["date"] - last).days > STALE_DAYS:
                 warnings.append(f"Latest {league} result in the data is {last:%Y-%m-%d}. Predictions "

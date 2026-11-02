@@ -21,7 +21,9 @@ Betting model for European football: Dixon-Coles team ratings (goals + shots on 
 - `predictor/ratings.py` Dixon-Coles fit, `model.py` league model, `calibration.py`, `markets.py`
 - `predictor/value.py` edges/stakes, `safety.py` play-safe filter, `slip.py` bet slips, `tracker.py` bet log
 - `predictor/consensus.py` bookmaker-vs-market test and its decision rule (`promising`); `snapshot.py` SportyBet odds log
-- `assets/loader.css` restyles every Streamlit spinner into the full-screen bouncing-football loading screen (selectors match Streamlit 1.66's spinner markup; recheck after upgrading Streamlit)
+- `assets/loader.css` is the bouncing-football loading screen: a page-wide `.fp-loader` (markup at the top of app.py) shows while Streamlit's header has its running icon or connection badge (spinners inside a hidden tab are invisible), and every spinner becomes the same card on top with its message. Selectors match Streamlit 1.66's markup; recheck after upgrading Streamlit
+- Bet of the day and Check a code are `st.fragment`s: their widgets rerun only that tab
+- Understat outages: `xg` remembers a failed download for 30 min and reuses saved player/xG files, so one outage doesn't mean a retry per team
 - SportyBet's feed sends at most 10 events per page: `sportybet.events` pages by `PAGE_SIZE = 10`
 - SportyBet publishes its own margin-free probability per outcome: `prob:<market>` columns next to `odds:<market>`, `book_probs` on each analysed fixture; `acca.candidates` prefers them
 - `sportybet.load_code` reads any booking code (`orders/share/{code}`); `predictor/doctor.py` analyses a code's legs and `improve` rebuilds it for the highest chance at a total odds ("Check a code" tab)
